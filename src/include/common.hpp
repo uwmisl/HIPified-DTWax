@@ -49,7 +49,7 @@ typedef float value_ht;
 #define HALF2FLOAT(a) a
 #define FIND_MIN(a, b) min(a, b)
 #define FIND_MAX(a, b) max(a, b)
-#define FMA(a, b, c) __fmaf_ieee_rn(a, b, c)
+#define FMA(a, b, c) __fmaf_rn(a, b, c)
 #define ADD(a, b) (a + b)
 #define SUB(a, b) (a - b) // make sure b is power of 2
 #define SQRT(a) sqrtf(a)  // a is to be float

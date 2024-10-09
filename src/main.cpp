@@ -40,16 +40,14 @@ All rights reserved.
 #include <unistd.h>
 
 #include "include/DTW.hpp"
-#include "include/generate_load_squiggle.hpp"
 #include "include/hpc_helpers.hpp"
 #include "include/load_reference.hpp"
-#include "include/normalizer.cu"
+#include "include/normalizer.cpp"
 #include <unistd.h>
 
 using namespace FullDTW;
 
-//----------------------------------------------------
------global
+//---------------------------------------------------------global
 // vars----------------------------------------------------------//
 hipStream_t stream_var[STREAM_NUM];
 
@@ -216,7 +214,7 @@ int main(int argc, char **argv) {
   idxt batch_count = NUM_READS / (BLOCK_NUM * STREAM_NUM);
   std::cout << "Batch count: " << batch_count << " num_reads:" << NUM_READS
             << "\n";
-  TIMERSTART_CUDA(concurrent_DTW_kernel_launch)
+  TIMERSTART_HIP(concurrent_DTW_kernel_launch)
   for (idxt batch_id = 0; batch_id <= batch_count; batch_id += 1) {
     std::cout << "Processing batch_id: " << batch_id << "\n";
 
@@ -274,7 +272,7 @@ int main(int argc, char **argv) {
   }
 
   ASSERT(hipDeviceSynchronize());
-  TIMERSTOP_CUDA(concurrent_DTW_kernel_launch, NUM_READS)
+  TIMERSTOP_HIP(concurrent_DTW_kernel_launch, NUM_READS)
 
   /* -----------------------------------------------------------------print
    * output -----------------------------------------------------*/

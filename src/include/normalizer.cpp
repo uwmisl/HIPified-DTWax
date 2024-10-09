@@ -3,13 +3,13 @@
 
 #include "common.hpp"
 #include <hip/hip_runtime.h>
-#include <hipDNN.h>
+#include <miopen.h>
 
 #define CUDNN_ASSERT(func)                                                     \
   {                                                                            \
-    hipdnnStatus_t e = (func);                                                  \
+    miopenStatus_t e = (func);                                                  \
     std::cout << "\ncuDTW::  cuDNN Normalizer returned: "                      \
-              << hipdnnGetErrorString(e) << "\n";                               \
+              << miopenGetErrorString(e) << "\n";                               \
   }
 
 // normalizer class
@@ -80,22 +80,28 @@ __inline__ void normalizer::normalize(raw_t *raw_squiggle_array,
   hipMemcpy(x, &raw_squiggle_array[0], (sizeof(raw_t) * c * h),
              hipMemcpyHostToDevice);
 
-  hipdnnHandle_t handle_;
-  hipdnnCreate(&handle_);
-  hipdnnDataType_t dtype = HIPDNN_DATA_FLOAT;
-  hipdnnTensorFormat_t format = HIPDNN_TENSOR_NCHW; // HIPDNN_TENSOR_NCHW;
-  hipdnnBatchNormMode_t mode = HIPDNN_BATCHNORM_SPATIAL;
+  miopenHandle_t handle_;
+  miopenCreate(&handle_);
+  miopenDataType_t dtype = miopenFloat;
+  miopenTensorLayout_t format = miopenTensorNCHW;
+  miopenBatchNormMode_t mode = miopenBNSpatial;
 
   // descriptors
-  hipdnnTensorDescriptor_t x_desc, bnScaleBiasMeanVarDesc;
-  hipdnnCreateTensorDescriptor(&x_desc);
-  hipdnnSetTensor4dDescriptor(x_desc, format, dtype, 1, c, h, 1);
+  miopenTensorDescriptor_t x_desc, bnScaleBiasMeanVarDesc;
+  miopenCreateTensorDescriptor(&x_desc);
+  int dimensions[4] = {1, c, h, 1};
+  int strides[4];
+  strides[3] = 1;                         // Stride for the last dimension (W)
+  strides[2] = dimensions[3] * strides[3]; // Stride for the height (H)
+  strides[1] = dimensions[2] * strides[2]; // Stride for the channels (C)
+  strides[0] = dimensions[1] * strides[1]; // Stride for the batch (N)
+  miopenSetTensorDescriptor(x_desc, dtype, 4, dimensions, strides);
 
-  hipdnnCreateTensorDescriptor(&bnScaleBiasMeanVarDesc);
-  hipdnnDeriveBNTensorDescriptor(bnScaleBiasMeanVarDesc, x_desc, mode);
+  miopenCreateTensorDescriptor(&bnScaleBiasMeanVarDesc);
+  miopenDeriveBNTensorDescriptor(bnScaleBiasMeanVarDesc, x_desc, mode);
 
   // normalize
-  hipdnnBatchNormalizationForwardTraining(
+  miopenBatchNormalizationForwardTraining(
       handle_, mode, alpha, beta, x_desc, x, x_desc, x, bnScaleBiasMeanVarDesc,
       bnScale, bnBias, 1.0 / (1.0 + h), NULL, NULL, 0.0001f, NULL, NULL);
 
@@ -109,7 +115,7 @@ __inline__ void normalizer::normalize(raw_t *raw_squiggle_array,
 
   //   std::cout << raw_squiggle_array[i] << ",";
   // }
-  // hipdnnDestroy(handle_);
+  // miopenDestroy(handle_);
   return;
 }
 

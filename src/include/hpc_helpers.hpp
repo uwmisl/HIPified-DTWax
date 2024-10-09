@@ -34,25 +34,25 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 #include <string>
 #include <unistd.h>
 
-#ifndef __CUDACC__
+#ifndef __HIPCC__
 #include <chrono>
 #endif
 
-#ifndef __CUDACC__
+#ifndef __HIPCC__
 #define TIMERSTART(label)                                                      \
   std::chrono::time_point<std::chrono::system_clock> a##label, b##label;       \
   a##label = std::chrono::system_clock::now();
 #else
 #define TIMERSTART(label)                                                      \
-  cudaSetDevice(0);                                                            \
-  cudaEvent_t start##label, stop##label;                                       \
+  hipSetDevice(0);                                                             \
+  hipEvent_t start##label, stop##label;                                       \
   float time##label;                                                           \
-  cudaEventCreate(&start##label);                                              \
-  cudaEventCreate(&stop##label);                                               \
-  cudaEventRecord(start##label, 0);
+  hipEventCreate(&start##label);                                              \
+  hipEventCreate(&stop##label);                                               \
+  hipEventRecord(start##label, 0);
 #endif
 
-#ifndef __CUDACC__
+#ifndef __HIPCC__
 #define TIMERSTOP(label)                                                       \
   b##label = std::chrono::system_clock::now();                                 \
   std::chrono::duration<double> delta##label = b##label - a##label;            \
@@ -60,20 +60,22 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
             << "s" << std::endl;
 #else
 #define TIMERSTOP(label)                                                       \
-  cudaSetDevice(0);                                                            \
-  cudaEventRecord(stop##label, 0);                                             \
-  cudaEventSynchronize(stop##label);                                           \
-  cudaEventElapsedTime(&time##label, start##label, stop##label);               \
+  hipSetDevice(0);                                                             \
+  hipEventRecord(stop##label, 0);                                              \
+  hipError_t sync_error##label = hipEventSynchronize(stop##label);             \
+  HIPERR;                                                                      \
+  hipError_t timer_error##label = hipEventElapsedTime(&time##label, start##label, stop##label); \
+  HIPERR;                                                                      \
   std::cout << "TIMING: " << time##label << " ms (" << #label << ")"           \
             << std::endl;
 #endif
 
-#ifdef __CUDACC__
-#define CUERR                                                                  \
+#ifdef __HIPCC__
+#define HIPERR                                                                  \
   {                                                                            \
-    cudaError_t err;                                                           \
-    if ((err = cudaGetLastError()) != cudaSuccess) {                           \
-      std::cout << "CUDA error: " << cudaGetErrorString(err) << " : "          \
+    hipError_t err;                                                           \
+    if ((err = hipGetLastError()) != hipSuccess) {                           \
+      std::cout << "HIP error: " << hipGetErrorString(err) << " : "          \
                 << __FILE__ << ", line " << __LINE__ << std::endl;             \
       exit(1);                                                                 \
     }                                                                          \
@@ -82,22 +84,24 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 
 //------------------------------------------------------------time
 // macros-----------------------------------------------------//
-#define TIMERSTART_CUDA(label)                                                 \
-  cudaSetDevice(0);                                                            \
-  cudaEvent_t start##label, stop##label;                                       \
+#define TIMERSTART_HIP(label)                                                  \
+  hipSetDevice(0);                                                             \
+  hipEvent_t start##label, stop##label;                                        \
   float time##label;                                                           \
-  cudaEventCreate(&start##label);                                              \
-  cudaEventCreate(&stop##label);                                               \
-  cudaEventRecord(start##label, 0);
+  hipEventCreate(&start##label);                                               \
+  hipEventCreate(&stop##label);                                                \
+  hipEventRecord(start##label, 0);
 
-#define TIMERSTOP_CUDA(label, NUM_READS)                                       \
-  cudaSetDevice(0);                                                            \
-  cudaEventRecord(stop##label, 0);                                             \
-  cudaEventSynchronize(stop##label);                                           \
-  cudaEventElapsedTime(&time##label, start##label, stop##label);               \
+#define TIMERSTOP_HIP(label, NUM_READS)                                        \
+  hipSetDevice(0);                                                             \
+  hipEventRecord(stop##label, 0);                                              \
+  hipEventSynchronize(stop##label);                                            \
+  hipError_t error##label = hipEventElapsedTime(&time##label, start##label, stop##label);        \
+  HIPERR;                                                                      \
   std::cout << "TIMING: " << time##label << " ms "                             \
             << ((QUERY_LEN / (time##label * 1e3)) * NUM_READS / 10)            \
             << " Mbps (" << #label << ")" << std::endl;
+
 //..........................................................other
 // macros.......................................................//
 #define ASSERT(ans)                                                            \
@@ -111,6 +115,7 @@ inline void gpuAssert(hipError_t code, const char *file, int line,
       exit(code);
   }
 }
+
 // safe division
 #define SDIV(x, y) (((x) + (y)-1) / (y))
 
