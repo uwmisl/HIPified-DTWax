@@ -44,12 +44,12 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
   a##label = std::chrono::system_clock::now();
 #else
 #define TIMERSTART(label)                                                      \
-  hipSetDevice(0);                                                             \
-  hipEvent_t start##label, stop##label;                                       \
+  ASSERT(hipSetDevice(0));                                                     \
+  hipEvent_t start##label, stop##label;                                        \
   float time##label;                                                           \
-  hipEventCreate(&start##label);                                              \
-  hipEventCreate(&stop##label);                                               \
-  hipEventRecord(start##label, 0);
+  ASSERT(hipEventCreate(&start##label));                                       \
+  ASSERT(hipEventCreate(&stop##label));                                        \
+  ASSERT(hipEventRecord(start##label, 0));                              
 #endif
 
 #ifndef __HIPCC__
@@ -60,22 +60,20 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
             << "s" << std::endl;
 #else
 #define TIMERSTOP(label)                                                       \
-  hipSetDevice(0);                                                             \
-  hipEventRecord(stop##label, 0);                                              \
-  hipError_t sync_error##label = hipEventSynchronize(stop##label);             \
-  HIPERR;                                                                      \
-  hipError_t timer_error##label = hipEventElapsedTime(&time##label, start##label, stop##label); \
-  HIPERR;                                                                      \
+  ASSERT(hipSetDevice(0));                                                     \
+  ASSERT(hipEventRecord(stop##label, 0));                                      \
+  ASSERT(hipEventSynchronize(stop##label));                                    \
+  ASSERT(hipEventElapsedTime(&time##label, start##label, stop##label));        \
   std::cout << "TIMING: " << time##label << " ms (" << #label << ")"           \
             << std::endl;
 #endif
 
 #ifdef __HIPCC__
-#define HIPERR                                                                  \
+#define HIPERR                                                                 \
   {                                                                            \
-    hipError_t err;                                                           \
-    if ((err = hipGetLastError()) != hipSuccess) {                           \
-      std::cout << "HIP error: " << hipGetErrorString(err) << " : "          \
+    hipError_t err;                                                            \
+    if ((err = hipGetLastError()) != hipSuccess) {                             \
+      std::cout << "HIP error: " << hipGetErrorString(err) << " : "            \
                 << __FILE__ << ", line " << __LINE__ << std::endl;             \
       exit(1);                                                                 \
     }                                                                          \
@@ -85,19 +83,18 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 //------------------------------------------------------------time
 // macros-----------------------------------------------------//
 #define TIMERSTART_HIP(label)                                                  \
-  hipSetDevice(0);                                                             \
+  ASSERT(hipSetDevice(0));                                                     \
   hipEvent_t start##label, stop##label;                                        \
   float time##label;                                                           \
-  hipEventCreate(&start##label);                                               \
-  hipEventCreate(&stop##label);                                                \
-  hipEventRecord(start##label, 0);
+  ASSERT(hipEventCreate(&start##label));                                       \
+  ASSERT(hipEventCreate(&stop##label));                                        \
+  ASSERT(hipEventRecord(start##label, 0));                              
 
 #define TIMERSTOP_HIP(label, NUM_READS)                                        \
-  hipSetDevice(0);                                                             \
-  hipEventRecord(stop##label, 0);                                              \
-  hipEventSynchronize(stop##label);                                            \
-  hipError_t error##label = hipEventElapsedTime(&time##label, start##label, stop##label);        \
-  HIPERR;                                                                      \
+  ASSERT(hipSetDevice(0));                                                     \
+  ASSERT(hipEventRecord(stop##label, 0));                                      \
+  ASSERT(hipEventSynchronize(stop##label));                                    \
+  ASSERT(hipEventElapsedTime(&time##label, start##label, stop##label));        \
   std::cout << "TIMING: " << time##label << " ms "                             \
             << ((QUERY_LEN / (time##label * 1e3)) * NUM_READS / 10)            \
             << " Mbps (" << #label << ")" << std::endl;
@@ -118,26 +115,4 @@ inline void gpuAssert(hipError_t code, const char *file, int line,
 
 // safe division
 #define SDIV(x, y) (((x) + (y)-1) / (y))
-
-// void input_parser(int argc, char *argv[], std::string &ip_path,
-//                   std::string &model_file, std::string &ref_file) {
-//   // int opt;
-//   // std::cout << argc;
-//   // while ((opt = getopt(argc, argv, “abc :”)) != -1) {
-//   //   switch (opt) {
-//   //   case ‘i’:
-//   //     ip_path = optarg;
-//   //     std::cout << "input path is " << ip_path << "\n";
-//   //     break;
-//   //   case ‘k’:
-//   //     model_file = optarg;
-//   //     std::cout << "model file is " << model_file << "\n";
-//   //     break;
-//   //   case ‘r’:
-//   //     ref_file = optarg;
-//   //     std::cout << "fasta reference file is " << ref_file << "\n";
-//   //     break;
-//   //   }
-//   // }
-// }
 #endif

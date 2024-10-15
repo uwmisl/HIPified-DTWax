@@ -42,7 +42,7 @@ All rights reserved.
 #include "include/DTW.hpp"
 #include "include/hpc_helpers.hpp"
 #include "include/load_reference.hpp"
-#include "include/normalizer.cpp"
+#include "include/cbf_generator.hpp"
 #include <unistd.h>
 
 using namespace FullDTW;
@@ -67,14 +67,19 @@ int main(int argc, char **argv) {
       *h_ref_coeffs_tmp; // struct stores reference genome's coeffs for DTW;
                          // *tmp is before restructuring for better mem
                          // coalescing
-  raw_t *raw_array = NULL;
+  raw_t *squiggle_data = NULL;
   std::vector<std::string> read_ids; // store read_ids to dump in output
   //****************************************************Target ref loading &
   // re-organization for better mem coalescing & target
   // loading****************************************//
 
   TIMERSTART(load_target)
-  std::string ip_path = argv[1], model_file = argv[2], ref_file = argv[3];
+  if (argc != 3) {
+      std::cerr << "Error: Invalid number of arguments." << std::endl;
+      std::cerr << "Usage: " << argv[0] << " <model_file> <ref_file>" << std::endl;
+      std::abort(); // Abort the program
+  }
+  std::string model_file = argv[1], ref_file = argv[2];
 
   load_reference *REF_LD = new load_reference;
 
@@ -109,10 +114,11 @@ int main(int argc, char **argv) {
     }
   }
 
-  hipFree(h_ref_coeffs_tmp); // delete the tmp array
+  ASSERT(
+    hipFree(h_ref_coeffs_tmp)); // delete the tmp array
 
   ASSERT(
-      hipMalloc(&(d_ref_coeffs), (sizeof(reference_coefficients) * REF_LEN)));
+    hipMalloc(&(d_ref_coeffs), (sizeof(reference_coefficients) * REF_LEN)));
 
   ASSERT(hipMemcpyAsync(
       d_ref_coeffs,
@@ -124,42 +130,36 @@ int main(int argc, char **argv) {
   //*************************************************************LOAD FROM
   // FILE********************************************************//
   TIMERSTART(load_data)
-  index_t NUM_READS; // counter to count number of reads to be
+  index_t NUM_READS=0; // counter to count number of reads to be
                      // processed + reference length
-  squiggle_loader *loader = new squiggle_loader;
-  loader->load_data(ip_path, raw_array, NUM_READS,
-                    read_ids); // load from input ONT data folder with FAST5
+  generate_cbf(squiggle_data, QUERY_LEN, NUM_READS);
 
   // NUM_READS = 1; //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!lkdnsknefkwnef
   ASSERT(hipHostMalloc(
-      &raw_array,
+      &squiggle_data,
       (sizeof(raw_t) *
        (NUM_READS * QUERY_LEN)))); // host pinned memory for raw data from FAST5
-
-  loader->load_query(raw_array);
-
-  delete loader;
 
   //****************************************************NORMALIZER****************************************//
   // normalizer instance - does h2h pinned mem transfer, CUDNN setup andzscore
   // normalization, normalized raw_t output is returned in same array as input
-  normalizer *NMZR = new normalizer(NUM_READS);
-  TIMERSTART(normalizer_kernel)
+//   normalizer *NMZR = new normalizer(NUM_READS);
+//   TIMERSTART(normalizer_kernel)
 
-  NMZR->normalize(raw_array, NUM_READS, QUERY_LEN);
+//   NMZR->normalize(raw_array, NUM_READS, QUERY_LEN);
 
-  TIMERSTOP(normalizer_kernel)
-#ifdef NV_DEBUG
-  std::cout << "cuDTW:: Normalizer processed  " << (QUERY_LEN * NUM_READS)
-            << " raw samples in this time\n";
-#endif
+//   TIMERSTOP(normalizer_kernel)
+// #ifdef NV_DEBUG
+//   std::cout << "cuDTW:: Normalizer processed  " << (QUERY_LEN * NUM_READS)
+//             << " raw samples in this time\n";
+// #endif
 
-#ifdef NV_DEBUG
-  NMZR->print_normalized_query(raw_array, NUM_READS, read_ids);
-#endif
+// #ifdef NV_DEBUG
+//   NMZR->print_normalized_query(raw_array, NUM_READS, read_ids);
+// #endif
 
-  delete NMZR;
-  // normalizartion completed
+//   delete NMZR;
+  // normalization completed
 
   //****************************************************FLOAT to
   //__half2****************************************//
@@ -171,13 +171,14 @@ int main(int argc, char **argv) {
   for (index_t i = 0; i < NUM_READS; i++) {
     for (index_t j = 0; j < QUERY_LEN; j++) {
       host_query[(i * QUERY_LEN + j)] =
-          FLOAT2HALF2(raw_array[(i * QUERY_LEN + j)]);
+          FLOAT2HALF2(squiggle_data[(i * QUERY_LEN + j)]);
     }
   }
   for (index_t i = 0; i < WARP_SIZE; i++) {
     host_query[NUM_READS * QUERY_LEN + i] = FLOAT2HALF2(0.0f);
   }
-  hipHostFree(raw_array);
+  ASSERT(
+    hipHostFree(squiggle_data));
   TIMERSTOP(load_data)
 
   //****************************************************MEM
@@ -205,7 +206,8 @@ int main(int argc, char **argv) {
   }
 
   TIMERSTOP(malloc)
-  hipDeviceSetCacheConfig(hipFuncCachePreferShared); //
+  ASSERT(
+    hipDeviceSetCacheConfig(hipFuncCachePreferShared)); //
   //****************************************************Mem I/O and DTW
   // computation****************************************//
 
@@ -303,15 +305,15 @@ int main(int argc, char **argv) {
    * memory -----------------------------------------------------*/
   TIMERSTART(free)
   for (int stream_id = 0; stream_id < STREAM_NUM; stream_id++) {
-    hipFree(device_dist[stream_id]);
-    hipFree(device_query[stream_id]);
-    hipFree(device_last_row[stream_id]);
+    ASSERT(hipFree(device_dist[stream_id]));
+    ASSERT(hipFree(device_query[stream_id]));
+    ASSERT(hipFree(device_last_row[stream_id]));
   }
 
-  hipHostFree(host_query);
-  hipHostFree(host_dist);
-  hipFree(h_ref_coeffs);
-  hipFree(d_ref_coeffs);
+  ASSERT(hipHostFree(host_query));
+  ASSERT(hipHostFree(host_dist));
+  ASSERT(hipFree(h_ref_coeffs));
+  ASSERT(hipFree(d_ref_coeffs));
 
   TIMERSTOP(free)
 
