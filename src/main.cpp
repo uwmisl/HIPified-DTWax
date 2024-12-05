@@ -27,7 +27,8 @@ All rights reserved.
 #ifndef MAIN_PROG
 #define MAIN_PROG
 
-#include "hip/hip_runtime.h"
+#include <hip/hip_runtime.h>
+#include <hip/hip_runtime_api.h>
 
 #include <assert.h>
 #include <cstdint>
@@ -43,248 +44,187 @@ All rights reserved.
 #include "include/hpc_helpers.hpp"
 #include "include/load_reference.hpp"
 #include "include/cbf_generator.hpp"
-#include <unistd.h>
+#include <hip_runtime_api.h>
 
 using namespace FullDTW;
 
-//---------------------------------------------------------global
-// vars----------------------------------------------------------//
 hipStream_t stream_var[STREAM_NUM];
 
-int main(int argc, char **argv) {
-
-  // create host storage and buffers on devices
-  value_ht *host_query, // time series on CPU
-      *host_dist,       // distance results on CPU
-      // *host_ref_coeff1, *host_ref_coeff2,                // re-arranged ref
-      // time series on CPU
-      *device_query[STREAM_NUM], // time series on GPU
-      *device_dist[STREAM_NUM];  // distance results on GPU
-
-  value_ht *device_last_row[STREAM_NUM]; // stors last column of sub-matrix
-
-  reference_coefficients *h_ref_coeffs, *d_ref_coeffs,
-      *h_ref_coeffs_tmp; // struct stores reference genome's coeffs for DTW;
-                         // *tmp is before restructuring for better mem
-                         // coalescing
-  raw_t *squiggle_data = NULL;
-  std::vector<std::string> read_ids; // store read_ids to dump in output
-  //****************************************************Target ref loading &
-  // re-organization for better mem coalescing & target
-  // loading****************************************//
-
-  TIMERSTART(load_target)
-  if (argc != 3) {
-      std::cerr << "Error: Invalid number of arguments." << std::endl;
-      std::cerr << "Usage: " << argv[0] << " <model_file> <ref_file>" << std::endl;
-      std::abort(); // Abort the program
+int main(int argc, char **argv)
+{
+  if (argc != 3)
+  {
+    std::cerr << "Error: Invalid number of arguments." << std::endl;
+    std::cerr << "Usage: " << argv[0] << " <model_file> <ref_file>" << std::endl;
+    std::abort();
   }
   std::string model_file = argv[1], ref_file = argv[2];
 
-  load_reference *REF_LD = new load_reference;
+  // Storage on host (CPU) and device (GPU)
+  value_ht *host_ref,               // Reference squiggle on CPU
+      *host_query,                  // Queries on CPU
+      *host_dist,                   // distance results on CPU
+      *device_ref,                  // One reference across all streams
+      *device_query[STREAM_NUM],    // One device_query per stream
+      *device_dist[STREAM_NUM],     // One device_dist (distance results) per stream
+      *device_last_row[STREAM_NUM]; // Last (column?) of sub-matrix (one per stream)
 
-  REF_LD->ref_loader(ref_file);
-  REF_LD->read_kmer_model(model_file);
-  ASSERT(hipMallocManaged(&h_ref_coeffs_tmp,
-                           (sizeof(reference_coefficients) *
-                            (REF_LEN)))); // host pinned memory for reference
-  ASSERT(hipMallocManaged(&h_ref_coeffs,
-                           (sizeof(reference_coefficients) *
-                            (REF_LEN)))); // host pinned memory for reference
-  REF_LD->load_ref_coeffs(h_ref_coeffs_tmp);
+  raw_t *query_squiggle = NULL;
+  std::vector<std::string> read_ids; // store read_ids to dump in output
 
-  delete REF_LD;
-
-  idxt k = 0;
-  for (idxt l = 0; l < (REF_LEN / REF_TILE_SIZE); l += 1) {
-    for (idxt i = 0; i < SEGMENT_SIZE; i++) {
-      for (idxt j = 0; j < WARP_SIZE; j++) {
-        h_ref_coeffs[k].coeff1 =
-            h_ref_coeffs_tmp[(l * REF_TILE_SIZE) + (j * SEGMENT_SIZE) + i]
-                .coeff1;
-        // h_ref_coeffs[k].coeff2 =
-        //     h_ref_coeffs_tmp[(l * REF_TILE_SIZE) + (j * SEGMENT_SIZE) + i]
-        //         .coeff2;
-
-        // std::cout << HALF2FLOAT(h_ref_coeffs[k].coeff1) << ","
-        //           << HALF2FLOAT(h_ref_coeffs[k].coeff2) << "\n";
-        k++;
-      }
-      // std::cout << "warp\n";
-    }
+  // ~~~
+  // Memory Allocations
+  // ~~~
+  TIMERSTART(malloc)
+  index_t NUM_READS = 1;
+  // On the host:
+  // MQ: value_ht or raw_t...?
+  ASSERT(hipHostMalloc(&host_ref, sizeof(value_ht) * REF_LEN));
+  ASSERT(hipHostMalloc(&host_query, sizeof(value_ht) * (NUM_READS * QUERY_LEN + WARP_SIZE)));
+  ASSERT(hipHostMalloc(&host_dist, sizeof(value_ht) * NUM_READS));
+  ASSERT(hipHostMalloc(&query_squiggle, sizeof(raw_t) * (NUM_READS * QUERY_LEN)));
+  // On the device:
+  ASSERT(hipMalloc(&device_ref, sizeof(value_ht) * REF_LEN));
+  for (int stream_id = 0; stream_id < STREAM_NUM; stream_id++)
+  {
+    ASSERT(hipMalloc(&device_query[stream_id], (sizeof(value_ht) * (BLOCK_NUM * QUERY_LEN + WARP_SIZE))));
+    ASSERT(hipMalloc(&device_dist[stream_id], (sizeof(value_ht) * BLOCK_NUM)));
+    ASSERT(hipMalloc(&device_last_row[stream_id], (sizeof(value_ht) * (REF_LEN * BLOCK_NUM))));
+    // Create the stream (saving into global variable 'stream_var')
+    ASSERT(hipStreamCreate(&stream_var[stream_id]));
   }
+  TIMERSTOP(malloc)
 
-  ASSERT(
-    hipFree(h_ref_coeffs_tmp)); // delete the tmp array
-
-  ASSERT(
-    hipMalloc(&(d_ref_coeffs), (sizeof(reference_coefficients) * REF_LEN)));
-
-  ASSERT(hipMemcpyAsync(
-      d_ref_coeffs,
-      h_ref_coeffs, //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!//
-      (sizeof(reference_coefficients) * REF_LEN), hipMemcpyHostToDevice));
-
-  TIMERSTOP(load_target)
-
-  //*************************************************************LOAD FROM
-  // FILE********************************************************//
+  // TODO: Adjust this to read my template in from a file
   TIMERSTART(load_data)
-  index_t NUM_READS=0; // counter to count number of reads to be
-                     // processed + reference length
-  generate_cbf(squiggle_data, QUERY_LEN, NUM_READS);
+  generate_cbf(query_squiggle, QUERY_LEN, NUM_READS);
 
-  // NUM_READS = 1; //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!lkdnsknefkwnef
-  ASSERT(hipHostMalloc(
-      &squiggle_data,
-      (sizeof(raw_t) *
-       (NUM_READS * QUERY_LEN)))); // host pinned memory for raw data from FAST5
-
-  //****************************************************NORMALIZER****************************************//
-  // normalizer instance - does h2h pinned mem transfer, CUDNN setup andzscore
-  // normalization, normalized raw_t output is returned in same array as input
-//   normalizer *NMZR = new normalizer(NUM_READS);
-//   TIMERSTART(normalizer_kernel)
-
-//   NMZR->normalize(raw_array, NUM_READS, QUERY_LEN);
-
-//   TIMERSTOP(normalizer_kernel)
-// #ifdef NV_DEBUG
-//   std::cout << "cuDTW:: Normalizer processed  " << (QUERY_LEN * NUM_READS)
-//             << " raw samples in this time\n";
-// #endif
-
-// #ifdef NV_DEBUG
-//   NMZR->print_normalized_query(raw_array, NUM_READS, read_ids);
-// #endif
-
-//   delete NMZR;
-  // normalization completed
-
-  //****************************************************FLOAT to
-  //__half2****************************************//
-  ASSERT(hipHostMalloc(
-      &host_query, sizeof(value_ht) * (NUM_READS * QUERY_LEN + WARP_SIZE))); /*
-                     input */
-  std::cout << "Normalized data:\n";
-
-  for (index_t i = 0; i < NUM_READS; i++) {
-    for (index_t j = 0; j < QUERY_LEN; j++) {
-      host_query[(i * QUERY_LEN + j)] =
-          FLOAT2HALF2(squiggle_data[(i * QUERY_LEN + j)]);
+  // This just copies query_squiggle into host_query? Calling FLOAT2HALF?
+  for (index_t i = 0; i < NUM_READS; i++)
+  {
+    for (index_t j = 0; j < QUERY_LEN; j++)
+    {
+      host_query[(i * QUERY_LEN) + j] = FLOAT2HALF(query_squiggle[((i * QUERY_LEN) + j)]);
     }
   }
-  for (index_t i = 0; i < WARP_SIZE; i++) {
-    host_query[NUM_READS * QUERY_LEN + i] = FLOAT2HALF2(0.0f);
+
+  // Pad the remaining WARP_SIZE elements with zeros
+  for (index_t i = 0; i < WARP_SIZE; i++)
+  {
+    host_query[NUM_READS * QUERY_LEN + i] = FLOAT2HALF(0.0f);
   }
-  ASSERT(
-    hipHostFree(squiggle_data));
+
+  // We assume that the first query_squiggle will be treated as the reference
+  // Rearrange the reference values for memory coalescing on the device
+  // (optimization). Each WARP_SIZE length chunk of host_ref is populated
+  // with values collected by taking strides of length SEGMENT_SIZE.
+  index_t k = 0;
+  for (index_t i = 0; i < SEGMENT_SIZE; i++)
+  {
+    for (index_t j = 0; j < WARP_SIZE; j++)
+    {
+      host_ref[k++] = FLOAT2HALF(query_squiggle[i + (j * SEGMENT_SIZE)]);
+    }
+  }
+
+  // Transfer this re-arranged reference onto the GPU device
+  ASSERT(hipMemcpyAsync(
+      device_ref,
+      &host_ref[0],
+      sizeof(value_ht) * REF_LEN, hipMemcpyHostToDevice));
+
+  // Free the host memory
+  ASSERT(hipHostFree(query_squiggle));
+  ASSERT(hipHostFree(host_ref));
   TIMERSTOP(load_data)
 
-  //****************************************************MEM
-  // allocation****************************************//
-  TIMERSTART(malloc)
-  //--------------------------------------------------------host mem
-  // allocation--------------------------------------------------//
-
-  // ASSERT(hipHostMalloc(&host_ref, sizeof(value_ht) * REF_LEN)); /* input
-
-  ASSERT(hipHostMalloc(&host_dist, sizeof(value_ht) * NUM_READS)); /* results
-                                                                     */
-
-  //-------------------------------------------------------------dev mem
-  // allocation-------------------------------------------------//
-
-  for (int stream_id = 0; stream_id < STREAM_NUM; stream_id++) {
-    ASSERT(
-        hipMalloc(&device_query[stream_id],
-                   (sizeof(value_ht) * (BLOCK_NUM * QUERY_LEN + WARP_SIZE))));
-    ASSERT(hipMalloc(&device_dist[stream_id], (sizeof(value_ht) * BLOCK_NUM)));
-    ASSERT(hipStreamCreate(&stream_var[stream_id]));
-    ASSERT(hipMalloc(&device_last_row[stream_id],
-                      (sizeof(value_ht) * (REF_LEN * BLOCK_NUM))));
-  }
-
-  TIMERSTOP(malloc)
-  ASSERT(
-    hipDeviceSetCacheConfig(hipFuncCachePreferShared)); //
-  //****************************************************Mem I/O and DTW
-  // computation****************************************//
+  // Ask the device (GPU) to prefer shared memory over cache memory
+  // Shared memory size will be increased, L1 cache size will be decreased
+  // (Optimization)
+  ASSERT(hipDeviceSetCacheConfig(hipFuncCachePreferShared));
 
   //-------------total batches of concurrent workload to & fro
   // device---------------//
-  idxt batch_count = NUM_READS / (BLOCK_NUM * STREAM_NUM);
+
+  TIMERSTART_HIP(concurrent_DTW_kernel_launch)
+  // Ceiling arithmetic to calculate total number of batches needed (last batch may be partially filled)
+  idxt batch_count = (NUM_READS + (BLOCK_NUM * STREAM_NUM) - 1) / (BLOCK_NUM * STREAM_NUM);
   std::cout << "Batch count: " << batch_count << " num_reads:" << NUM_READS
             << "\n";
-  TIMERSTART_HIP(concurrent_DTW_kernel_launch)
-  for (idxt batch_id = 0; batch_id <= batch_count; batch_id += 1) {
+  // For each batch:
+  for (idxt batch_id = 0; batch_id < batch_count; batch_id += 1)
+  {
     std::cout << "Processing batch_id: " << batch_id << "\n";
-
+    // Number of reads that this batch is going to process
     idxt rds_in_batch = (BLOCK_NUM * STREAM_NUM);
-    if (batch_id < batch_count)
-      rds_in_batch = (BLOCK_NUM * STREAM_NUM);
-    else if ((batch_id == batch_count) &&
-             ((NUM_READS % (BLOCK_NUM * STREAM_NUM)) == 0)) {
-      if (batch_count != 0)
-        break;
-      else
-        rds_in_batch = NUM_READS;
-    } else if ((batch_id == batch_count) &&
-               ((NUM_READS % (BLOCK_NUM * STREAM_NUM)) != 0)) {
+    // Special processing for when the final batch is only partially filled
+    if (batch_id == batch_count - 1 && NUM_READS % (BLOCK_NUM * STREAM_NUM) != 0)
+    {
+      // Final batch gets the remaining reads
       rds_in_batch = NUM_READS % (BLOCK_NUM * STREAM_NUM);
     }
-    for (idxt stream_id = 1; (stream_id <= STREAM_NUM) && (rds_in_batch != 0);
-         stream_id += 1) {
 
-      idxt rds_in_stream = BLOCK_NUM;
-
-      if ((rds_in_batch - BLOCK_NUM) < 0) {
+    // Each batch will process using streams
+    // It will use up to STREAM_NUM number of streams, or
+    // as many as it takes to process the rds_in_batch (for a partially filled batch)
+    for (idxt stream_id = 0; (stream_id < STREAM_NUM) && (rds_in_batch != 0);
+         stream_id += 1)
+    {
+      // Each stream will process up to BLOCK_NUM amount of reads
+      idxt rds_in_stream;
+      if (rds_in_batch >= BLOCK_NUM)
+      {
+        rds_in_stream = BLOCK_NUM;
+        rds_in_batch -= BLOCK_NUM;
+      }
+      else
+      {
+        // Edge case: fewer than BLOCK_NUM reads remaining
         rds_in_stream = rds_in_batch;
         rds_in_batch = 0;
-      } else {
-        rds_in_batch -= BLOCK_NUM;
-        rds_in_stream = BLOCK_NUM;
       }
       std::cout << "Issuing " << rds_in_stream
                 << " reads (blocks) from base addr:"
                 << (batch_id * STREAM_NUM * BLOCK_NUM * QUERY_LEN) +
-                       ((stream_id - 1) * BLOCK_NUM * QUERY_LEN)
-                << " to stream_id " << (stream_id - 1) << "\n";
-      //----h2d copy-------------//
+                       (stream_id * BLOCK_NUM * QUERY_LEN)
+                << " to stream_id " << stream_id << "\n";
+      // Copy host_query to device_query
+      // Move the queries from CPU to GPU
       ASSERT(hipMemcpyAsync(
-          device_query[stream_id - 1],
+          device_query[stream_id],
           &host_query[(batch_id * STREAM_NUM * BLOCK_NUM * QUERY_LEN) +
-                      ((stream_id - 1) * BLOCK_NUM * QUERY_LEN)],
+                      (stream_id * BLOCK_NUM * QUERY_LEN)],
           (sizeof(value_ht) * (QUERY_LEN * rds_in_stream + WARP_SIZE)),
-          hipMemcpyHostToDevice, stream_var[stream_id - 1]));
+          hipMemcpyHostToDevice, stream_var[stream_id]));
 
-      //---------launch kernels------------//
-      distances<value_ht, idxt>(d_ref_coeffs, device_query[stream_id - 1],
-                                device_dist[stream_id - 1], rds_in_stream,
-                                FLOAT2HALF2(0), stream_var[stream_id - 1],
-                                device_last_row[stream_id - 1]);
+      // Launch the kernel
+      distances<value_ht, idxt>(device_ref, device_query[stream_id],
+                                device_dist[stream_id], rds_in_stream,
+                                FLOAT2HALF(0), stream_var[stream_id],
+                                device_last_row[stream_id]);
 
-      //-----d2h copy--------------//
+      // Copy the distance results back to the host
+      // Move device_dist to host_dist
       ASSERT(hipMemcpyAsync(
           &host_dist[(batch_id * STREAM_NUM * BLOCK_NUM) +
-                     ((stream_id - 1) * BLOCK_NUM)],
-          device_dist[stream_id - 1], (sizeof(value_ht) * rds_in_stream),
-          hipMemcpyDeviceToHost, stream_var[stream_id - 1]));
+                     ((stream_id)*BLOCK_NUM)],
+          device_dist[stream_id], (sizeof(value_ht) * rds_in_stream),
+          hipMemcpyDeviceToHost, stream_var[stream_id]));
     }
   }
 
+  // Wait on all active streams
   ASSERT(hipDeviceSynchronize());
   TIMERSTOP_HIP(concurrent_DTW_kernel_launch, NUM_READS)
 
-  /* -----------------------------------------------------------------print
-   * output -----------------------------------------------------*/
-
+// Print final output
 #ifndef FP16
   std::cout << "Read_ID\t"
             << "QUERY_LEN\t"
             << "REF_LEN\t"
             << "sDTW-score\n";
-  for (index_t j = 0; j < NUM_READS; j++) {
+  for (index_t j = 0; j < NUM_READS; j++)
+  {
     std::cout << j << "\t" << read_ids[j] << "\t" << QUERY_LEN << "\t"
               << REF_LEN << "\t" << HALF2FLOAT(host_dist[j]) << "\n";
   }
@@ -293,7 +233,8 @@ int main(int argc, char **argv) {
             << "QUERY_LEN\t"
             << "REF_LEN\t"
             << "sDTW score: fwd-strand\tsDTW score: rev-strand\n";
-  for (index_t j = 0; j < NUM_READS; j++) {
+  for (index_t j = 0; j < NUM_READS; j++)
+  {
     std::cout << j << "\t" << read_ids[j] << "\t" << QUERY_LEN << "\t"
               << REF_LEN << "\t" << HALF2FLOAT(host_dist[j].x) << "\t"
               << HALF2FLOAT(host_dist[j].y) << "\n";
@@ -301,20 +242,19 @@ int main(int argc, char **argv) {
 
 #endif
 
-  /* -----------------------------------------------------------------free
-   * memory -----------------------------------------------------*/
+  // Free remaining memory
   TIMERSTART(free)
-  for (int stream_id = 0; stream_id < STREAM_NUM; stream_id++) {
+  // On the host (CPU):
+  ASSERT(hipHostFree(host_query));
+  ASSERT(hipHostFree(host_dist));
+  // On the device (GPU):
+  ASSERT(hipFree(device_ref));
+  for (int stream_id = 0; stream_id < STREAM_NUM; stream_id++)
+  {
     ASSERT(hipFree(device_dist[stream_id]));
     ASSERT(hipFree(device_query[stream_id]));
     ASSERT(hipFree(device_last_row[stream_id]));
   }
-
-  ASSERT(hipHostFree(host_query));
-  ASSERT(hipHostFree(host_dist));
-  ASSERT(hipFree(h_ref_coeffs));
-  ASSERT(hipFree(d_ref_coeffs));
-
   TIMERSTOP(free)
 
   return 0;

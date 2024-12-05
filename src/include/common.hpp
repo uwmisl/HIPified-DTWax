@@ -30,7 +30,6 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 
 //...............global variables..........................//
 #ifdef FP16
-
 #include <hip/hip_fp16.h>
 typedef __half2 value_ht;
 #define HALF2FLOAT(a) __half2float(a)
@@ -40,7 +39,7 @@ typedef __half2 value_ht;
 #define ADD(a, b) __hadd2(a, b)
 #define SUB(a, b) __hsub2(a, b)
 #define SQRT(a) h2sqrt(a)
-#define FLOAT2HALF2(a) FLOAT2HALF(a, a)
+// #define FLOAT2HALF2(a) FLOAT2HALF(a, a)
 #define GT(a, b) __hgt(a, b)
 
 #else
@@ -53,7 +52,7 @@ typedef float value_ht;
 #define ADD(a, b) (a + b)
 #define SUB(a, b) (a - b) // make sure b is power of 2
 #define SQRT(a) sqrtf(a)  // a is to be float
-#define FLOAT2HALF2(a) FLOAT2HALF(a)
+// #define FLOAT2HALF2(a) FLOAT2HALF(a)
 #define GT(a, b) (a > b)
 #endif
 

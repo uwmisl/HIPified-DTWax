@@ -1,4 +1,4 @@
-# normalizer.cu
+# ./src/include/normalizer.cu
 
 - Found no inline PTX assembly (searched for 'asm')
 - Found no hardcoded dependencies on warp size (searched for '32')
@@ -12,7 +12,10 @@
   warning: normalizer.cu:98: deprecated identifier "cudnnBatchNormalizationForwardTraining" since CUDNN 9.0.0
 ```
 
-# DTW.cu
+  - Changed hipDNN calls to miopen calls (The initial hipification replaced cuDNN with hipDNN, but the actual recommended replacement is miopen)
+  - Added a ‘strides’ parameter to miopenSetTensorDescriptor (followed ChatGPT recommended values)
+
+# ./src/include/DTW.cu
 
 - Found no inline PTX assembly (searched for 'asm')
 - Found no hardcoded dependencies on warp size (searched for '32')
@@ -45,7 +48,7 @@
   warning: DTW.cu:540: unsupported device function "__shfl_up_sync":           min_segment = __shfl_up_sync((ALL), min_segment, 1);
   ```
 
-  # main.cu
+  # ./src/main.cu
 
   - Found no inline PTX assembly (searched for 'asm')
   - Found no hardcoded dependencies on warp size (searched for '32')
@@ -56,7 +59,9 @@
   [mqueen@login1 src]$ hipify-perl main.cu > main.cpp
   ```
 
-  # ru_main.cu
+  - Updated to include (the new) normalizer.cpp instead of normalizer.cu
+
+  # ./src/ru_main.cu
 
   - Found no inline PTX assembly (searched for 'asm')
   - Found no hardcoded dependencies on warp size (searched for '32')
@@ -66,12 +71,23 @@
   [mqueen@login1 src]$ hipify-perl ru_main.cu > ru_main.cpp
   ```
 
-  # common.hpp
+  # ./src/include/common.hpp
 
   - Replaced `#include <cuda_fp16.h>` with `#include <hip/hip_fp16.h>`
   - (UNDID) Replaced `#define COMON_HPP` with `#define COMMON_HPP` (not a hipification thing, but a warning I got when building)
 
-  # DTW.hpp
+  # ./src/include/DTW.hpp
 
   - Replaced `#include <cuda_fp16.h>` with `#include <hip/hip_fp16.h>`
   - Replaced `#include "DTW.cu"` with `#include "DTW.cpp"`
+
+  # ./src/include/hpc_helpers.hpp
+
+  - Updated macros to use HIP versions instead of CUDA versions
+  - Updated macros to check for __HIPCC__ rather than __CUDACC__
+  - The HIP functions specify that the return values are [[nodiscard]] – wrapped the calls in ASSERTs to check for success
+
+  # ./src/include/common.hpp
+
+  - Replaced the cuda fused-multiply-add  intrinsic with the HIP version (replaced __fmaf_ieee_rn with __fmaf_rn). ChatGPT was hilariously bad at this one and made up a number of non-existent fma functions. Going right to the [actual documentation](https://rocm.docs.amd.com/projects/HIP/en/latest/reference/math_api.html)
+ was far more effective! 
