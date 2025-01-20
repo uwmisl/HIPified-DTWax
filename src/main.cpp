@@ -43,8 +43,7 @@ All rights reserved.
 #include "include/DTW.hpp"
 #include "include/hpc_helpers.hpp"
 #include "include/load_reference.hpp"
-#include "include/cbf_generator.hpp"
-#include <hip_runtime_api.h>
+#include "include/read_from_txt.hpp"
 
 using namespace FullDTW;
 
@@ -52,16 +51,26 @@ hipStream_t stream_var[STREAM_NUM];
 
 int main(int argc, char **argv)
 {
-  if (argc != 3)
+  // The program needs one argument, the filename containing the reference and query signals
+  if (argc != 2)
   {
     std::cerr << "Error: Invalid number of arguments." << std::endl;
-    std::cerr << "Usage: " << argv[0] << " <model_file> <ref_file>" << std::endl;
-    std::abort();
+    std::cerr << "Usage: " << argv[0] << " <data file name>" << std::endl;
+    return 1;
   }
-  std::string model_file = argv[1], ref_file = argv[2];
+  std::string data_file = argv[1];
+
+  // A number of important parameters are defined in common.hpp, we sanity check them here
+  // MQ: There are other ones I should be checking here, but I haven't teased them apart yet
+  // MQ: PREFIX_LEN is a rough name, I think QUERY_SEGMENT_LEN would be better?
+  if(QUERY_LEN < PREFIX_LEN) {
+    std::cerr << "Error: The PREFIX_LEN must be no larger than QUERY_LEN" << std::endl;
+    return 1;
+  }
 
   // Storage on host (CPU) and device (GPU)
   value_ht *host_ref,               // Reference squiggle on CPU
+      *temp_host_ref,               // Reference will be temporarily stored here, prior to memory coalescing
       *host_query,                  // Queries on CPU
       *host_dist,                   // distance results on CPU
       *device_ref,                  // One reference across all streams
@@ -69,8 +78,7 @@ int main(int argc, char **argv)
       *device_dist[STREAM_NUM],     // One device_dist (distance results) per stream
       *device_last_row[STREAM_NUM]; // Last (column?) of sub-matrix (one per stream)
 
-  raw_t *query_squiggle = NULL;
-  std::vector<std::string> read_ids; // store read_ids to dump in output
+  // raw_t *query_squiggle = NULL;
 
   // ~~~
   // Memory Allocations
@@ -80,9 +88,10 @@ int main(int argc, char **argv)
   // On the host:
   // MQ: value_ht or raw_t...?
   ASSERT(hipHostMalloc(&host_ref, sizeof(value_ht) * REF_LEN));
+  ASSERT(hipHostMalloc(&temp_host_ref, sizeof(value_ht) * REF_LEN));
   ASSERT(hipHostMalloc(&host_query, sizeof(value_ht) * (NUM_READS * QUERY_LEN + WARP_SIZE)));
   ASSERT(hipHostMalloc(&host_dist, sizeof(value_ht) * NUM_READS));
-  ASSERT(hipHostMalloc(&query_squiggle, sizeof(raw_t) * (NUM_READS * QUERY_LEN)));
+  // ASSERT(hipHostMalloc(&query_squiggle, sizeof(raw_t) * (NUM_READS * QUERY_LEN)));
   // On the device:
   ASSERT(hipMalloc(&device_ref, sizeof(value_ht) * REF_LEN));
   for (int stream_id = 0; stream_id < STREAM_NUM; stream_id++)
@@ -97,24 +106,54 @@ int main(int argc, char **argv)
 
   // TODO: Adjust this to read my template in from a file
   TIMERSTART(load_data)
-  generate_cbf(query_squiggle, QUERY_LEN, NUM_READS);
+  std::ifstream inFile(data_file);
+  if (!inFile) {
+      std::cerr << "Error: File '" << data_file << "' does not exist or cannot be opened." << std::endl;
+      // MQ: Nothing is being freed when we exit here
+      return 1;
+  }
+  readDataFromTxt(inFile, temp_host_ref, host_query, NUM_READS);
+  inFile.close();
+
+  // MQ: remove once verified
+  // Output the data to verify it was read correctly
+  // std::cout << "Reference read from file:" << std::endl;
+  // for (index_t i = 0; i < 500; i++)
+  // {
+  //     std::cout << temp_host_ref[i] << " ";
+  // }
+  // std::cout << std::endl;
+  // std::cout << "Queries read from file:" << std::endl;
+  // for (index_t i = 0; i < NUM_READS; i++)
+  // {
+  //   for (index_t j = 0; j < 300; j++)
+  //   {
+  //     std::cout << host_query[i*NUM_READS+j] << " ";
+  //   }
+  //   std::cout << std::endl;
+  // }
+  // std::abort();
+  // MQ: end of remove once verified
+
 
   // This just copies query_squiggle into host_query? Calling FLOAT2HALF?
-  for (index_t i = 0; i < NUM_READS; i++)
-  {
-    for (index_t j = 0; j < QUERY_LEN; j++)
-    {
-      host_query[(i * QUERY_LEN) + j] = FLOAT2HALF(query_squiggle[((i * QUERY_LEN) + j)]);
-    }
-  }
+  // MQ: Commented this out because the readDataFromTxt already does all of this
+  // for (index_t i = 0; i < NUM_READS; i++)
+  // {
+  //   for (index_t j = 0; j < QUERY_LEN; j++)
+  //   {
+  //     host_query[(i * QUERY_LEN) + j] = FLOAT2HALF(query_squiggle[((i * QUERY_LEN) + j)]);
+  //   }
+  // }
 
   // Pad the remaining WARP_SIZE elements with zeros
+  // MQ: Suuuuper not sure why we do this
   for (index_t i = 0; i < WARP_SIZE; i++)
   {
     host_query[NUM_READS * QUERY_LEN + i] = FLOAT2HALF(0.0f);
   }
 
-  // We assume that the first query_squiggle will be treated as the reference
+
   // Rearrange the reference values for memory coalescing on the device
   // (optimization). Each WARP_SIZE length chunk of host_ref is populated
   // with values collected by taking strides of length SEGMENT_SIZE.
@@ -123,7 +162,7 @@ int main(int argc, char **argv)
   {
     for (index_t j = 0; j < WARP_SIZE; j++)
     {
-      host_ref[k++] = FLOAT2HALF(query_squiggle[i + (j * SEGMENT_SIZE)]);
+      host_ref[k++] = FLOAT2HALF(temp_host_ref[i + (j * SEGMENT_SIZE)]);
     }
   }
 
@@ -134,7 +173,7 @@ int main(int argc, char **argv)
       sizeof(value_ht) * REF_LEN, hipMemcpyHostToDevice));
 
   // Free the host memory
-  ASSERT(hipHostFree(query_squiggle));
+  ASSERT(hipHostFree(temp_host_ref));
   ASSERT(hipHostFree(host_ref));
   TIMERSTOP(load_data)
 
@@ -219,23 +258,21 @@ int main(int argc, char **argv)
 
 // Print final output
 #ifndef FP16
-  std::cout << "Read_ID\t"
-            << "QUERY_LEN\t"
+  std::cout << "QUERY_LEN\t"
             << "REF_LEN\t"
             << "sDTW-score\n";
   for (index_t j = 0; j < NUM_READS; j++)
   {
-    std::cout << j << "\t" << read_ids[j] << "\t" << QUERY_LEN << "\t"
+    std::cout << j << "\t" << QUERY_LEN << "\t"
               << REF_LEN << "\t" << HALF2FLOAT(host_dist[j]) << "\n";
   }
 #else
-  std::cout << "Read_ID\t"
-            << "QUERY_LEN\t"
+  std::cout << "QUERY_LEN\t"
             << "REF_LEN\t"
             << "sDTW score: fwd-strand\tsDTW score: rev-strand\n";
   for (index_t j = 0; j < NUM_READS; j++)
   {
-    std::cout << j << "\t" << read_ids[j] << "\t" << QUERY_LEN << "\t"
+    std::cout << j << "\t" << QUERY_LEN << "\t"
               << REF_LEN << "\t" << HALF2FLOAT(host_dist[j].x) << "\t"
               << HALF2FLOAT(host_dist[j].y) << "\n";
   }

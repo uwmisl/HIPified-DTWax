@@ -19,7 +19,7 @@ main: $(MAIN_FILE)
 	$(HIPCC) $(HIPCFLAGS) $(CXXFLAGS) $(LIBS) $(LDFLAGS) $(MAIN_FILE) -o main
 
 debug: 
-	$(HIPCC) $(HIPCFLAGS) -Wextra -Werror -g -O0 $(CXXFLAGS) -v $(LIBS) $(LDFLAGS) $(MAIN_FILE) -o main_debug
+	$(HIPCC) $(HIPCFLAGS) -DHIP_DEBUG -Wextra -Werror -g -O0 $(CXXFLAGS) -v $(LIBS) $(LDFLAGS) $(MAIN_FILE) -o main_debug
 
 format:
 	clang-format -i *.cpp include/*.hpp include/*.cpp
