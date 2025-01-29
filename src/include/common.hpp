@@ -28,6 +28,8 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
 #ifndef COMMON_HPP
 #define COMMON_HPP
 
+#include "data_dims.hpp"
+
 //...............global variables..........................//
 #ifdef FP16
 #include <hip/hip_fp16.h>
@@ -56,13 +58,16 @@ typedef float value_ht;
 #define GT(a, b) (a > b)
 #endif
 
-#define KMER_LEN 6 // MQ: I don't think this is being used anymore
-#define WARP_SIZE 64 // The number of threads in each warp. This is 64 for AMD and 32 for NVIDIA.
-// Because of the shfl_up operations, the calculations will NOT be correct if you have the incorrect number.
-
+/*
+The number of threads in each warp. This is 64 for AMD and 32 for NVIDIA.
+This version of DTWax has not been tested on NVIDIA hardware.
+Because of the shfl_up operations, the calculations will NOT be correct if you have the incorrect number.
+*/
+#define WARP_SIZE 64
 #define LOG_WARP_SIZE 6 // Update when updating WARP_SIZE! MQ: I don't think this actually gets used anywhere rn?
 
-#define QUERY_LEN 64
+// #define NUM_READS 1
+// #define QUERY_LEN 64
 #define PREFIX_LEN 64 // Must be no larger than QUERY_LEN. This is the number of query elements in each query batch.
 // This is constrained by the size of shared memory.
 // #define QUERY_LEN (512 * 4)
@@ -70,11 +75,11 @@ typedef float value_ht;
 //>=WARP_SIZE for the coalesced shared mem; has to be a multiple of 32; >=64 if
 // using PINGPONG buffer
 
-#define SEGMENT_SIZE 1 // 26 // 40 // The number of reference elements that each thread will work on.
+#define SEGMENT_SIZE 1 // The number of reference elements that each thread will work on.
 // Can be 1 in the simplist case, and can be >1 for performance gains. These gains are constrained by the number of registers available.
 #ifndef FP16
 // #define REF_LEN SEGMENT_SIZE * WARP_SIZE * 2
-#define REF_LEN 128
+// #define REF_LEN 128
 #else
 #define REF_LEN (47 * 1024) // length of fwd strand in case of FP16
 #endif

@@ -33,16 +33,15 @@ All rights reserved.
 #include <assert.h>
 #include <cstdint>
 #include <iostream>
-
-#include "include/common.hpp"
-#include "include/datatypes.hpp"
 #include <stdio.h>
 #include <string>
 #include <unistd.h>
 
+#include "include/common.hpp"
+#include "include/datatypes.hpp"
+#include "include/data_dims.hpp"
 #include "include/DTW.hpp"
 #include "include/hpc_helpers.hpp"
-#include "include/load_reference.hpp"
 #include "include/read_from_txt.hpp"
 
 using namespace FullDTW;
@@ -63,8 +62,15 @@ int main(int argc, char **argv)
   // A number of important parameters are defined in common.hpp, we sanity check them here
   // MQ: There are other ones I should be checking here, but I haven't teased them apart yet
   // MQ: PREFIX_LEN is a rough name, I think QUERY_SEGMENT_LEN would be better?
-  if(QUERY_LEN < PREFIX_LEN) {
+  if (QUERY_LEN < PREFIX_LEN)
+  {
     std::cerr << "Error: The PREFIX_LEN must be no larger than QUERY_LEN" << std::endl;
+    return 1;
+  }
+
+  if (REF_BATCH <= 0)
+  {
+    std::cerr << "Error: REF_BATCH <= 0, check REF_LEN and SEGMENT_SIZE. " << std::endl;
     return 1;
   }
 
@@ -84,7 +90,7 @@ int main(int argc, char **argv)
   // Memory Allocations
   // ~~~
   TIMERSTART(malloc)
-  index_t NUM_READS = 1;
+  // index_t NUM_READS = 1;
   // On the host:
   // MQ: value_ht or raw_t...?
   ASSERT(hipHostMalloc(&host_ref, sizeof(value_ht) * REF_LEN));
@@ -107,34 +113,34 @@ int main(int argc, char **argv)
   // TODO: Adjust this to read my template in from a file
   TIMERSTART(load_data)
   std::ifstream inFile(data_file);
-  if (!inFile) {
-      std::cerr << "Error: File '" << data_file << "' does not exist or cannot be opened." << std::endl;
-      // MQ: Nothing is being freed when we exit here
-      return 1;
+  if (!inFile)
+  {
+    std::cerr << "Error: File '" << data_file << "' does not exist or cannot be opened." << std::endl;
+    // MQ: Nothing is being freed when we exit here
+    return 1;
   }
-  readDataFromTxt(inFile, temp_host_ref, host_query, NUM_READS);
+  readDataFromTxt(inFile, temp_host_ref, host_query);
   inFile.close();
 
   // MQ: remove once verified
   // Output the data to verify it was read correctly
-  // std::cout << "Reference read from file:" << std::endl;
-  // for (index_t i = 0; i < 500; i++)
-  // {
-  //     std::cout << temp_host_ref[i] << " ";
-  // }
-  // std::cout << std::endl;
-  // std::cout << "Queries read from file:" << std::endl;
-  // for (index_t i = 0; i < NUM_READS; i++)
-  // {
-  //   for (index_t j = 0; j < 300; j++)
-  //   {
-  //     std::cout << host_query[i*NUM_READS+j] << " ";
-  //   }
-  //   std::cout << std::endl;
-  // }
+  std::cout << "Reference read from file:" << std::endl;
+  for (index_t i = 0; i < REF_LEN; i++)
+  {
+    std::cout << temp_host_ref[i] << " ";
+  }
+  std::cout << std::endl;
+  std::cout << "Queries read from file:" << std::endl;
+  for (index_t i = 0; i < NUM_READS; i++)
+  {
+    for (index_t j = 0; j < QUERY_LEN; j++)
+    {
+      std::cout << host_query[i * NUM_READS + j] << " ";
+    }
+    std::cout << std::endl;
+  }
   // std::abort();
   // MQ: end of remove once verified
-
 
   // This just copies query_squiggle into host_query? Calling FLOAT2HALF?
   // MQ: Commented this out because the readDataFromTxt already does all of this
@@ -153,18 +159,32 @@ int main(int argc, char **argv)
     host_query[NUM_READS * QUERY_LEN + i] = FLOAT2HALF(0.0f);
   }
 
-
   // Rearrange the reference values for memory coalescing on the device
   // (optimization). Each WARP_SIZE length chunk of host_ref is populated
   // with values collected by taking strides of length SEGMENT_SIZE.
-  index_t k = 0;
-  for (index_t i = 0; i < SEGMENT_SIZE; i++)
+  idxt k = 0;
+  printf("REF_LEN=%0d\n", REF_LEN);
+  printf("REF_TILE_SIZE=%0d\n", REF_TILE_SIZE);
+  printf("(REF_LEN / REF_TILE_SIZE)=%0d\n", (REF_LEN / REF_TILE_SIZE));
+  printf("SEGMENT_SIZE=%0d\n", SEGMENT_SIZE);
+  printf("WARP_SIZE=%0d\n", WARP_SIZE);
+  for (idxt ref_batch = 0; ref_batch < REF_BATCH; ref_batch++)
   {
-    for (index_t j = 0; j < WARP_SIZE; j++)
+    for (idxt i = 0; i < SEGMENT_SIZE; i++)
     {
-      host_ref[k++] = FLOAT2HALF(temp_host_ref[i + (j * SEGMENT_SIZE)]);
+      for (idxt j = 0; j < WARP_SIZE; j++)
+      {
+        host_ref[k++] = temp_host_ref[(ref_batch * REF_TILE_SIZE) + (j * SEGMENT_SIZE) + i];
+      }
     }
   }
+  std::cout << "host_ref after memory coalescing:" << std::endl;
+  for (index_t i = 0; i < REF_LEN; i++)
+  {
+    std::cout << host_ref[i] << " ";
+  }
+  std::cout << std::endl;
+  //std::abort();
 
   // Transfer this re-arranged reference onto the GPU device
   ASSERT(hipMemcpyAsync(
@@ -258,6 +278,7 @@ int main(int argc, char **argv)
 
 // Print final output
 #ifndef FP16
+  std::cout << "Results:\n";
   std::cout << "QUERY_LEN\t"
             << "REF_LEN\t"
             << "sDTW-score\n";
