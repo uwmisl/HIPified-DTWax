@@ -1,13 +1,16 @@
 #!/bin/bash
 
+
 # Ensure a filename argument is provided
-if [ $# -ne 1 ]; then
+if [ $# -lt 1 ]; then
   echo "Error: Missing argument. Usage: $0 <filename>"
   exit 1
 fi
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_name=$(basename "$0")
 file="$1"
+segment_size=${2:-1} # optional, defaults to 1
 
 # Check if the file exists
 if [ ! -f "$file" ]; then
@@ -21,7 +24,8 @@ query_len=$(sed -n '2p' "$file" | wc -w)
 num_reads=$(( $(wc -l < "$file") - 1 ))
 
 # Define output path for the header file
-output_file="../src/include/data_dims.hpp"
+src_dir="$script_dir/../src"
+output_file="$src_dir/include/data_dims.hpp"
 
 # Write precompiler directives to data_dims.hpp
 cat <<EOL > "$output_file"
@@ -36,19 +40,20 @@ If you have a new data file, building using $script_name <your data file> is rec
 #define REF_LEN $ref_len
 #define QUERY_LEN $query_len
 #define NUM_READS $num_reads
+#define SEGMENT_SIZE $segment_size
 #define REF_BATCH (REF_LEN / REF_TILE_SIZE)
 
 #endif // DATA_DIMS_HPP
 EOL
 
-# Move to ../src directory and run make
-if ! cd ../src; then
-  echo "Error: Directory '../src' not found. Build failed."  >&2
+# Move to src directory and run make
+if ! cd $src_dir; then
+  echo "Error: Directory $src_dir not found. Build failed."  >&2
   exit 1
 fi
 
 # Run make
-if make debug; then
+if make clean; make debug; then
   echo -e "Successfully built.\nTo run, do ./main_debug $file"
 else
   echo "Error: Build failed."  >&2

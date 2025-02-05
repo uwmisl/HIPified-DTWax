@@ -75,7 +75,7 @@ Because of the shfl_up operations, the calculations will NOT be correct if you h
 //>=WARP_SIZE for the coalesced shared mem; has to be a multiple of 32; >=64 if
 // using PINGPONG buffer
 
-#define SEGMENT_SIZE 1 // The number of reference elements that each thread will work on.
+// #define SEGMENT_SIZE 1 // The number of reference elements that each thread will work on.
 // Can be 1 in the simplist case, and can be >1 for performance gains. These gains are constrained by the number of registers available.
 #ifndef FP16
 // #define REF_LEN SEGMENT_SIZE * WARP_SIZE * 2

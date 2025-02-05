@@ -1,1 +1,10 @@
+# Ignore executables
+src/main
 src/main_debug
+
+# Ignore temp files
+*.temp
+
+# Ignore all __pycache__ directories and compiled Python files
+__pycache__/
+*.py[cod]

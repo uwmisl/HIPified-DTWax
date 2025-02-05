@@ -1,30 +1,46 @@
-import run_test
-import numpy as np
-from dtw import dtw
-import os
+import tests
+import inspect
 
 # Force reload of run_test.py
 import importlib
-importlib.reload(run_test)
+importlib.reload(tests)
+
+def get_all_tests():
+    all_functions = inspect.getmembers(tests, predicate=inspect.isfunction)
+    # There are some helper functions that shouldn't be included as a test to run
+    tests_to_run = [func for name, func in all_functions if not name.startswith('_')]
+    return tests_to_run
 
 def main():
-    # Generating an even simple test dataset
-    ref = [1]*64
-    query = [1]*64
-    query[0] = 5
-    print(f'Generated a reference of length {len(ref)} and a query of length {len(query)}')
-    alignment = dtw(query, ref, dist_method='sqeuclidean', distance_only=True)
-    print(f'The Squared Euclidiean dtw distance is {alignment.distance}')
-
-    # Get the location for the test datasets
-    # (get the absolute path, so this works wherever this script is called from)
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    file_path = os.path.join(script_dir, 'data.txt')
-    with open(file_path, "w") as outFile:
-        outFile.write(" ".join(map(str, ref)) + "\n")
-        outFile.write(" ".join(map(str, query)) + "\n")
+    # Comment out the tests you want to skip here in this list
+    tests_to_run = [
+        # tests.r64_q64,
+        # tests.r256_q64,
+        # tests.r64_q256,
+        # tests.r256_q256,
+        # tests.r256_q256_seg4,
+        tests.r256_q256_seg4_count4
+    ]
     
-    run_test.run_test(file_path)
-
+    # Alternately, this will run all tests, even ones not specified above
+    # (useful if you've added tests and don't want to copy paste test names)
+    tests_to_run = get_all_tests()
+    
+    passing_tests = 0
+    for i, test in enumerate(tests_to_run):
+        print("~~~~~~~~")
+        print(f"Test {i}: {test.__name__}")
+        print("~~~~~~~~")
+        result = test()
+        if result:
+            passing_tests += 1
+        print("\n\n")
+    
+    total_tests = len(tests_to_run)
+    if passing_tests == total_tests:
+        print(f"\033[92m{passing_tests}/{total_tests} tests passed.\033[0m")  # Green if all tests passed
+    else:
+        print(f"\033[91m{passing_tests}/{total_tests} tests passed.\033[0m")  # Red if any test failed
+    
 if __name__ == "__main__":
     main()
