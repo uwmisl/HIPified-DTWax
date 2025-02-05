@@ -10,4 +10,4 @@ __pycache__/
 *.py[cod]
 
 # Ignore personal vscode settings
-.vscode/settings.json
+.vscode/*
