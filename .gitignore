@@ -8,3 +8,6 @@ src/main_debug
 # Ignore all __pycache__ directories and compiled Python files
 __pycache__/
 *.py[cod]
+
+# Ignore personal vscode settings
+.vscode/settings.json
