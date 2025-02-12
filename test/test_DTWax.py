@@ -19,12 +19,17 @@ def main():
         # tests.r64_q256,
         # tests.r256_q256,
         # tests.r256_q256_seg4,
-        tests.r256_q256_seg4_count4
+        # tests.r10k_q5k_seg8_count8,
+        # tests.r256_q256_seg4_count4,
+        # tests.random_r64_q64,
+        # tests.protein_id,
+        # tests.random_ints,
+        tests.failing_int
     ]
     
     # Alternately, this will run all tests, even ones not specified above
     # (useful if you've added tests and don't want to copy paste test names)
-    tests_to_run = get_all_tests()
+    # tests_to_run = get_all_tests()
     
     passing_tests = 0
     for i, test in enumerate(tests_to_run):

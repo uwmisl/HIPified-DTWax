@@ -122,7 +122,7 @@ int main(int argc, char **argv)
   readDataFromTxt(inFile, temp_host_ref, host_query);
   inFile.close();
 
-  // MQ: remove once verified
+#ifdef HIP_DEBUG
   // Output the data to verify it was read correctly
   std::cout << "Reference read from file:" << std::endl;
   for (index_t i = 0; i < REF_LEN; i++)
@@ -139,19 +139,7 @@ int main(int argc, char **argv)
     }
     std::cout << std::endl;
   }
-  // std::abort();
-  // MQ: end of remove once verified
-
-  // This just copies query_squiggle into host_query? Calling FLOAT2HALF?
-  // MQ: Commented this out because the readDataFromTxt already does all of this
-  // for (index_t i = 0; i < NUM_READS; i++)
-  // {
-  //   for (index_t j = 0; j < QUERY_LEN; j++)
-  //   {
-  //     host_query[(i * QUERY_LEN) + j] = FLOAT2HALF(query_squiggle[((i * QUERY_LEN) + j)]);
-  //   }
-  // }
-
+#endif
   // Pad the remaining WARP_SIZE elements with zeros
   // MQ: Suuuuper not sure why we do this
   for (index_t i = 0; i < WARP_SIZE; i++)
@@ -178,13 +166,14 @@ int main(int argc, char **argv)
       }
     }
   }
+#ifdef HIP_DEBUG
   std::cout << "host_ref after memory coalescing:" << std::endl;
   for (index_t i = 0; i < REF_LEN; i++)
   {
     std::cout << host_ref[i] << " ";
   }
   std::cout << std::endl;
-  //std::abort();
+#endif
 
   // Transfer this re-arranged reference onto the GPU device
   ASSERT(hipMemcpyAsync(
@@ -284,8 +273,7 @@ int main(int argc, char **argv)
             << "sDTW-score\n";
   for (index_t j = 0; j < NUM_READS; j++)
   {
-    std::cout << j << "\t" << QUERY_LEN << "\t"
-              << REF_LEN << "\t" << HALF2FLOAT(host_dist[j]) << "\n";
+    printf("%ld\t%d\t%d\t%.2f\n", j, QUERY_LEN, REF_LEN, HALF2FLOAT(host_dist[j]));
   }
 #else
   std::cout << "QUERY_LEN\t"

@@ -1,4 +1,6 @@
 import run_test
+import numpy as np
+import os
 
 # Force reload of run_test.py
 import importlib
@@ -67,22 +69,51 @@ def r256_q256():
 def r256_q256_seg4():
     print("Testing a reference of length 256 with a single query of length 256 and segment size of 4")
     return _run_4_subtests(256, 256, 4)
-    # seg_size = 4
-    # ref_len = 256
-    # query_len = 256
-    # reference = [1]*ref_len
-    # query = [1]*query_len
-    # query[0] = 5
-    # queries = [query]
-    # return run_test.run_test(reference, queries, seg_size)
 
 def r256_q256_seg4_count4():
-    seg_size = 4
-    ref_len = 256
-    query_len = 256
-    reference = [1]*ref_len
-    query = [1]*query_len
+    reference = [1]*256
+    query = [1]*256
     query[0] = 5
     queries = [query]*4
-    queries[0] = [1]*query_len
-    return run_test.run_test(reference, queries, seg_size)
+    queries[0] = [1]*256
+    return run_test.run_test(reference, queries, 4)
+
+def random_r64_q64():
+    reference = np.random.rand(64).astype(np.float32)
+    queries = [np.random.rand(64).astype(np.float32)]
+    return run_test.run_test(reference, queries)
+
+def r10k_q5k_seg8_count8():
+    reference = np.random.rand(64*5000).astype(np.float32)
+    queries = np.random.rand(8, 64*10).astype(np.float32)
+    return run_test.run_test(reference, queries, 1)
+
+def random_ints():
+    reference = np.random.randint(0, 2, 64*2, dtype=np.int32)
+    queries = np.random.randint(0, 2, (10000, 64*2), dtype=np.int32)
+    file_path = run_test.write_temp_data(reference, queries)
+    dtwax_scores = run_test.launch_DTWax(file_path, segment_size)
+    python_scores = run_test.launch_python_dtw(file_path)
+    passing, mismatch = run_test.compare_scores_get_mismatch(dtwax_scores, python_scores)
+    if mismatch is not None:
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        failing_file_path = os.path.join(script_dir, "failing_ints.txt")
+        with open(failing_file_path, "w") as outFile:
+            outFile.write(" ".join(map(str, reference)) + "\n")
+            outFile.write(" ".join(map(str, queries[mismatch])) + "\n")
+        print(f"Failing case written to {failing_file_path}")
+    return passing
+
+def protein_id():
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    file_path = os.path.join(script_dir, 'protein_id_test.txt')
+    dtwax_scores = run_test.launch_DTWax(file_path, segment_size=8)
+    python_scores = run_test.launch_python_dtw(file_path)
+    return run_test.compare_scores(dtwax_scores, python_scores)
+
+def failing_int():
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    file_path = os.path.join(script_dir, '../data_files/failing_ints.txt')
+    dtwax_scores = run_test.launch_DTWax(file_path)
+    python_scores = run_test.launch_python_dtw(file_path)
+    return run_test.compare_scores(dtwax_scores, python_scores)
