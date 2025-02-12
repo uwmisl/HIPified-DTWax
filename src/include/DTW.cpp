@@ -8,8 +8,6 @@
 #include <hip/hip_cooperative_groups.h>
 #include <hip/amd_detail/host_defines.h>
 
-// #define HIP_DEBUG // MQ: remove (just want the VSCode highlighting to work...)
-
 // Cost function if reference deletions are permitted
 // Cost = (r1-q)^2 + min(left, top, diag)
 #ifndef NO_REF_DEL
@@ -115,16 +113,10 @@ compute_segment(idxt &wave, const idx_t &thread_id, val_t &query_val,
   }
 }
 
-// Subsequence DTW
 template <typename idx_t, typename val_t>
 __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
-                    idx_t num_entries, val_t thresh, val_t *device_last_row)
+                    idx_t num_entries, val_t *device_last_row)
 {
-#if REF_BATCH > 1
-  __shared__ val_t penalty_last_col[PREFIX_LEN];
-  val_t last_col_penalty_shuffled; // used to store last col of matrix (when reference is broken up into batches)
-#endif
-
   // Indexing variables
   const idx_t block_id = blockIdx.x;
   const idx_t thread_id = threadIdx.x;
@@ -134,6 +126,11 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
   val_t penalty_here[SEGMENT_SIZE];
   val_t min_segment = INFINITY; // finds min of segment for sDTW
   val_t ref_segment[SEGMENT_SIZE];
+
+#if REF_BATCH > 1
+  __shared__ val_t penalty_last_col[QUERY_BATCH_SIZE];
+  val_t last_col_penalty_shuffled; // used to store last col of matrix (when reference is broken up into batches)
+#endif
 
 #pragma unroll
   for (idxt query_batch = 0; query_batch < QUERY_BATCH; query_batch++)
@@ -151,7 +148,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
     }
     val_t query_val = INFINITY;
     val_t new_query_val =
-        query[(block_id * QUERY_LEN) + (query_batch * PREFIX_LEN) + thread_id];
+        query[(block_id * QUERY_LEN) + (query_batch * QUERY_BATCH_SIZE) + thread_id];
     // Initialize first thread's query_val
     if (thread_id == 0)
     {
@@ -175,8 +172,8 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
     // calculate full matrix in wavefront parallel manner, multiple cells per thread
     for (idxt wave = 1; wave <= NUM_WAVES; wave++)
     {
-      // If thead_id is between (wave-PREFIX_LEN) and (wave-1), it participates in this wave
-      if (((wave - PREFIX_LEN) <= thread_id) && (thread_id <= (wave - 1)))
+      // If thead_id is between (wave-QUERY_BATCH_SIZE) and (wave-1), it participates in this wave
+      if (((wave - QUERY_BATCH_SIZE) <= thread_id) && (thread_id <= (wave - 1)))
       {
         compute_segment<idx_t, val_t>(wave, thread_id, query_val, ref_segment,
                                       penalty_left, penalty_here, penalty_diag,
@@ -189,7 +186,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       // MQ: Also, this goes beyond the length of the query...?
       if ((wave & WARP_SIZE_MINUS_ONE) == 0) // MQ: I think this is the last wave? maybe??
       {
-        new_query_val = query[(block_id * QUERY_LEN) + (query_batch * PREFIX_LEN) + wave + thread_id];
+        new_query_val = query[(block_id * QUERY_LEN) + (query_batch * QUERY_BATCH_SIZE) + wave + thread_id];
       }
 
       // Shuffle up query_value and penalties for each thread
@@ -226,7 +223,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
 
 #endif
       // Find min of segment and then shuffle up for sDTW
-      if ((wave >= PREFIX_LEN) && (query_batch == (QUERY_BATCH - 1)))
+      if ((wave >= QUERY_BATCH_SIZE) && (query_batch == (QUERY_BATCH - 1)))
       {
         if (wave == NUM_WAVES)
         {
@@ -270,7 +267,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
 
       // Load next WARP_SIZE query values from memory into new_query_val buffer
       query_val = INFINITY;
-      new_query_val = query[(block_id * QUERY_LEN) + (query_batch * PREFIX_LEN) + thread_id];
+      new_query_val = query[(block_id * QUERY_LEN) + (query_batch * QUERY_BATCH_SIZE) + thread_id];
 
       // Initialize first thread's chunk
       if (thread_id == 0)
@@ -286,7 +283,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       // Calculate full matrix in wavefront parallel manner, multiple cells per thread
       for (idxt wave = 1; wave <= NUM_WAVES; wave++)
       {
-        if (((wave - PREFIX_LEN) <= thread_id) && (thread_id <= (wave - 1)))
+        if (((wave - QUERY_BATCH_SIZE) <= thread_id) && (thread_id <= (wave - 1)))
         {
           compute_segment<idx_t, val_t>(
               wave, thread_id, query_val, ref_segment, penalty_left,
@@ -299,7 +296,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         // MQ: Also, this goes beyond the length of the query...?
         if ((wave & WARP_SIZE_MINUS_ONE) == 0)
         {
-          new_query_val = query[(block_id * QUERY_LEN) + wave + thread_id + (query_batch * PREFIX_LEN)];
+          new_query_val = query[(block_id * QUERY_LEN) + wave + thread_id + (query_batch * QUERY_BATCH_SIZE)];
         }
 
         // Pass next query_value to each thread
@@ -338,7 +335,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         }
 
         // Find min of segment and then shuffle up for sDTW
-        if ((wave >= PREFIX_LEN) && (query_batch == (QUERY_BATCH - 1)))
+        if ((wave >= QUERY_BATCH_SIZE) && (query_batch == (QUERY_BATCH - 1)))
         {
           if (wave == NUM_WAVES)
           {
@@ -381,7 +378,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
     // Load next WARP_SIZE query values from memory into new_query_val buffer
     query_val = FLOAT2HALF(INFINITY);
     new_query_val =
-        query[(block_id * QUERY_LEN) + (query_batch * PREFIX_LEN) + thread_id];
+        query[(block_id * QUERY_LEN) + (query_batch * QUERY_BATCH_SIZE) + thread_id];
 
     // Initialize first thread's chunk
     if (thread_id == 0)
@@ -399,7 +396,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
     for (idxt wave = 1; wave <= NUM_WAVES; wave++)
     {
       // If thread 'thread_id' is participating in this wave, compute it's segment
-      if (((wave - PREFIX_LEN) <= thread_id) && (thread_id <= (wave - 1)))
+      if (((wave - QUERY_BATCH_SIZE) <= thread_id) && (thread_id <= (wave - 1)))
       {
         compute_segment<idx_t, val_t>(wave, thread_id, query_val, ref_segment,
                                       penalty_left, penalty_here, penalty_diag,
@@ -411,7 +408,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       // MQ: Also, this goes beyond the length of the query...?
       if ((wave & WARP_SIZE_MINUS_ONE) == 0)
       {
-        new_query_val = query[(block_id * QUERY_LEN) + wave + thread_id + (query_batch * PREFIX_LEN)];
+        new_query_val = query[(block_id * QUERY_LEN) + wave + thread_id + (query_batch * QUERY_BATCH_SIZE)];
       }
 
       // Pass next query_value to each thread
@@ -431,7 +428,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       }
 
       // Find min of segment and then shuffle up for sDTW
-      if ((wave >= PREFIX_LEN) && (query_batch == (QUERY_BATCH - 1)))
+      if ((wave >= QUERY_BATCH_SIZE) && (query_batch == (QUERY_BATCH - 1)))
       {
         if (wave == (NUM_WAVES))
           min_segment = penalty_here[SEGMENT_SIZE - 1];

@@ -59,12 +59,18 @@ int main(int argc, char **argv)
   }
   std::string data_file = argv[1];
 
-  // A number of important parameters are defined in common.hpp, we sanity check them here
-  // MQ: There are other ones I should be checking here, but I haven't teased them apart yet
-  // MQ: PREFIX_LEN is a rough name, I think QUERY_SEGMENT_LEN would be better?
-  if (QUERY_LEN < PREFIX_LEN)
+// A number of important parameters are defined in data_dims.hpp, we sanity check them here
+// MQ: There are other ones I should be checking here, but I haven't teased them apart yet
+#ifdef HIP_DEBUG
+  printf("REF_LEN=%0d\n", REF_LEN);
+  printf("REF_TILE_SIZE=%0d\n", REF_TILE_SIZE);
+  printf("(REF_LEN / REF_TILE_SIZE)=%0d\n", (REF_LEN / REF_TILE_SIZE));
+  printf("SEGMENT_SIZE=%0d\n", SEGMENT_SIZE);
+  printf("WARP_SIZE=%0d\n", WARP_SIZE);
+#endif
+  if (QUERY_LEN < QUERY_BATCH_SIZE)
   {
-    std::cerr << "Error: The PREFIX_LEN must be no larger than QUERY_LEN" << std::endl;
+    std::cerr << "Error: The QUERY_BATCH_SIZE must be no larger than QUERY_LEN" << std::endl;
     return 1;
   }
 
@@ -144,18 +150,13 @@ int main(int argc, char **argv)
   // MQ: Suuuuper not sure why we do this
   for (index_t i = 0; i < WARP_SIZE; i++)
   {
-    host_query[NUM_READS * QUERY_LEN + i] = FLOAT2HALF(0.0f);
+    host_query[NUM_READS * QUERY_LEN + i] = 0.0f;
   }
 
   // Rearrange the reference values for memory coalescing on the device
   // (optimization). Each WARP_SIZE length chunk of host_ref is populated
   // with values collected by taking strides of length SEGMENT_SIZE.
   idxt k = 0;
-  printf("REF_LEN=%0d\n", REF_LEN);
-  printf("REF_TILE_SIZE=%0d\n", REF_TILE_SIZE);
-  printf("(REF_LEN / REF_TILE_SIZE)=%0d\n", (REF_LEN / REF_TILE_SIZE));
-  printf("SEGMENT_SIZE=%0d\n", SEGMENT_SIZE);
-  printf("WARP_SIZE=%0d\n", WARP_SIZE);
   for (idxt ref_batch = 0; ref_batch < REF_BATCH; ref_batch++)
   {
     for (idxt i = 0; i < SEGMENT_SIZE; i++)
@@ -248,8 +249,7 @@ int main(int argc, char **argv)
       // Launch the kernel
       distances<value_ht, idxt>(device_ref, device_query[stream_id],
                                 device_dist[stream_id], rds_in_stream,
-                                FLOAT2HALF(0), stream_var[stream_id],
-                                device_last_row[stream_id]);
+                                stream_var[stream_id], device_last_row[stream_id]);
 
       // Copy the distance results back to the host
       // Move device_dist to host_dist
@@ -266,27 +266,15 @@ int main(int argc, char **argv)
   TIMERSTOP_HIP(concurrent_DTW_kernel_launch, NUM_READS)
 
 // Print final output
-#ifndef FP16
   std::cout << "Results:\n";
   std::cout << "QUERY_LEN\t"
             << "REF_LEN\t"
-            << "sDTW-score\n";
+            << "DTW-score\n";
   for (index_t j = 0; j < NUM_READS; j++)
   {
     printf("%ld\t%d\t%d\t%.2f\n", j, QUERY_LEN, REF_LEN, HALF2FLOAT(host_dist[j]));
   }
-#else
-  std::cout << "QUERY_LEN\t"
-            << "REF_LEN\t"
-            << "sDTW score: fwd-strand\tsDTW score: rev-strand\n";
-  for (index_t j = 0; j < NUM_READS; j++)
-  {
-    std::cout << j << "\t" << QUERY_LEN << "\t"
-              << REF_LEN << "\t" << HALF2FLOAT(host_dist[j].x) << "\t"
-              << HALF2FLOAT(host_dist[j].y) << "\n";
-  }
 
-#endif
 
   // Free remaining memory
   TIMERSTART(free)
