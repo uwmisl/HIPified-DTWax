@@ -1,10 +1,12 @@
-import run_test
+import test_utils
 import numpy as np
 import os
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
-# Force reload of run_test.py
+# Force reload of test_utils.py
 import importlib
-importlib.reload(run_test)
+importlib.reload(test_utils)
 
 # Notation:
 # rX = reference of length X
@@ -20,28 +22,32 @@ def _run_4_subtests(ref_len, query_len, segment_size=1):
     query = [1]*query_len
     query[0] = 5
     queries = [query]
-    test_passes = test_passes and run_test.run_test(reference, queries, segment_size)
+    subtest_passed = test_utils.run_test(reference, queries, segment_size)
+    test_passes = test_passes and subtest_passed
     
     print("Subtest 2: Reference is all 1s, Query is all 1s except query[-1]=5")
     reference = [1]*ref_len
     query = [1]*query_len
     query[-1] = 5
     queries = [query]
-    test_passes = test_passes and run_test.run_test(reference, queries)
+    subtest_passed = test_utils.run_test(reference, queries, segment_size)
+    test_passes = test_passes and subtest_passed
     
     print("Subtest 3: Reference is all 1s except reference[0]=5, Query is all 1s")
     reference = [1]*ref_len
     query = [1]*query_len
     reference[0] = 5
     queries = [query]
-    test_passes = test_passes and run_test.run_test(reference, queries)
+    subtest_passed = test_utils.run_test(reference, queries, segment_size)
+    test_passes = test_passes and subtest_passed
     
     print("Subtest 4: Reference is all 1s except reference[-1]=5, Query is all 1s")
     reference = [1]*ref_len
     query = [1]*query_len
     reference[-1] = 5
     queries = [query]
-    test_passes = test_passes and run_test.run_test(reference, queries)
+    subtest_passed = test_utils.run_test(reference, queries, segment_size)
+    test_passes = test_passes and subtest_passed
     
     return test_passes
 
@@ -65,10 +71,6 @@ def r256_q256():
     print("Testing a reference of length 256 with a single query of length 256")
     print("This will test reference batching in conjunction with query batching")
     return _run_4_subtests(256, 256)
-    
-def r256_q256_seg4():
-    print("Testing a reference of length 256 with a single query of length 256 and segment size of 4")
-    return _run_4_subtests(256, 256, 4)
 
 def r256_q256_seg4_count4():
     reference = [1]*256
@@ -76,25 +78,75 @@ def r256_q256_seg4_count4():
     query[0] = 5
     queries = [query]*4
     queries[0] = [1]*256
-    return run_test.run_test(reference, queries, 4)
+    return test_utils.run_test(reference, queries, 4)
 
 def random_r64_q64():
     reference = np.random.rand(64).astype(np.float32)
     queries = [np.random.rand(64).astype(np.float32)]
-    return run_test.run_test(reference, queries)
+    return test_utils.run_test(reference, queries)
 
-def r10k_q5k_seg8_count8():
-    reference = np.random.rand(64*5000).astype(np.float32)
-    queries = np.random.rand(8, 64*10).astype(np.float32)
-    return run_test.run_test(reference, queries, 1)
+def r38k_q1728_count20():
+    reference = np.random.rand(38336).astype(np.float32)
+    queries = np.random.rand(20, 1728).astype(np.float32)
+    return test_utils.run_test(reference, queries, segment_size=1)
 
-def random_ints():
-    reference = np.random.randint(0, 2, 64*2, dtype=np.int32)
-    queries = np.random.randint(0, 2, (10000, 64*2), dtype=np.int32)
-    file_path = run_test.write_temp_data(reference, queries)
-    dtwax_scores = run_test.launch_DTWax(file_path, segment_size)
-    python_scores = run_test.launch_python_dtw(file_path)
-    passing, mismatch = run_test.compare_scores_get_mismatch(dtwax_scores, python_scores)
+def by_data_file():
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    # file_path = os.path.join(script_dir, '../data_files/failing_ints.txt')
+    file_path = os.path.join(script_dir, './failing_ints.txt')
+    file_path = os.path.join(script_dir, './passing_ints.txt')
+    with open(file_path, "r") as inFile:
+        reference = list(map(float, inFile.readline().strip().split()))
+        queries = []
+        for line in inFile:
+            queries.append(list(map(float, line.strip().split())))
+    dtwax_scores, dtwax_stdout = test_utils.launch_DTWax(file_path, segment_size=2, debug=True)
+    dtwax_matrix = test_utils.process_stdout(dtwax_stdout, len(reference), len(queries[0]))
+    python_score, python_matrix = test_utils.python_dtw_score_debug(reference, queries[0])
+    print(f"DTWax: (score={dtwax_scores[0]}) (dims={dtwax_matrix.shape})")
+    # print(dtwax_matrix)
+    print(f"Python: (score={python_score}) (dims={python_matrix.shape})")
+    # print(python_matrix)
+    print(dtwax_matrix[0:4,126:130] == python_matrix[0:4,126:130])
+    print(dtwax_matrix[0:4,126:130])
+    print(python_matrix[0:4,126:130])
+    diff = dtwax_matrix != python_matrix
+    cmap = mcolors.ListedColormap(['#5ab4ac', '#d8b365'])
+    norm = mcolors.BoundaryNorm([0, 0.5, 1], cmap.N)
+    plt.imshow(diff, cmap=cmap, norm=norm)
+    plt.gca().xaxis.set_label_position('top')
+    plt.gca().xaxis.tick_top()
+    plt.xlabel('reference')
+    plt.ylabel('query')
+
+    cbar = plt.colorbar(label='Difference', ticks=[0, 1])
+    cbar.ax.set_yticklabels(['correct value', 'incorrect value'])
+
+    plt.title('Matrix Differences')
+    plt.savefig('cost_matrix_diff.png')
+    plt.close()
+
+    return python_score == dtwax_scores[0]
+
+def random_ints_fast():
+    segment_size = 2
+    reference = np.random.randint(0, 2, 64*segment_size*2, dtype=np.int32)
+    queries = np.random.randint(0, 2, (10, 64*2), dtype=np.int32)
+    file_path = test_utils.write_temp_data(reference, queries)
+    dtwax_scores, _ = test_utils.launch_DTWax(file_path, segment_size, debug=False)
+    python_scores = test_utils.launch_python_dtw(file_path)
+    return test_utils.compare_scores(dtwax_scores, python_scores)
+
+def random_ints_thorough():
+    segment_size = 1
+    reference = np.random.randint(0, 2, 64*segment_size*2, dtype=np.int32)
+    queries = np.random.randint(0, 2, (10, 64*2), dtype=np.int32)
+    file_path = test_utils.write_temp_data(reference, queries)
+    dtwax_scores, std_out = test_utils.launch_DTWax(file_path, segment_size, debug=True)
+    # dtwax_matrix = test_utils.process_stdout(std_out)
+    python_scores = test_utils.launch_python_dtw(file_path)
+    # python_score, python_matrix = test_utils.python_dtw_score_debug(reference, queries[0])
+    passing, mismatch = test_utils.compare_scores_get_mismatch(dtwax_scores, python_scores)
     if mismatch is not None:
         script_dir = os.path.dirname(os.path.realpath(__file__))
         failing_file_path = os.path.join(script_dir, "failing_ints.txt")
@@ -102,18 +154,34 @@ def random_ints():
             outFile.write(" ".join(map(str, reference)) + "\n")
             outFile.write(" ".join(map(str, queries[mismatch])) + "\n")
         print(f"Failing case written to {failing_file_path}")
+        
+    # This doesn't necessarily use a passing case, it assumes the first query passed...
+    script_dir = os.path.dirname(os.path.realpath(__file__))
+    passing_file_path = os.path.join(script_dir, "passing_ints.txt")
+    with open(passing_file_path, "w") as outFile:
+        outFile.write(" ".join(map(str, reference)) + "\n")
+        outFile.write(" ".join(map(str, queries[0])) + "\n")
+    print(f"Passing case written to {passing_file_path}")
     return passing
 
 def protein_id():
     script_dir = os.path.dirname(os.path.realpath(__file__))
     file_path = os.path.join(script_dir, 'protein_id_test.txt')
-    dtwax_scores = run_test.launch_DTWax(file_path, segment_size=8)
-    python_scores = run_test.launch_python_dtw(file_path)
-    return run_test.compare_scores(dtwax_scores, python_scores)
+    dtwax_scores, _ = test_utils.launch_DTWax(file_path, segment_size=1)
+    python_scores = test_utils.launch_python_dtw(file_path)
+    return test_utils.compare_scores(dtwax_scores, python_scores)
 
-def failing_int():
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    file_path = os.path.join(script_dir, '../data_files/failing_ints.txt')
-    dtwax_scores = run_test.launch_DTWax(file_path)
-    python_scores = run_test.launch_python_dtw(file_path)
-    return run_test.compare_scores(dtwax_scores, python_scores)
+def failing_seg2():
+    reference = [1]*128
+    query = [1]*64
+    reference[0] = 5
+    # query[0] = 5
+    file_path = test_utils.write_temp_data(reference, [query])
+    dtwax_scores, dtwax_stdout = test_utils.launch_DTWax(file_path, segment_size=2)
+    dtwax_matrix = test_utils.process_stdout(dtwax_stdout, len(reference), len(query))
+    python_score, python_matrix = test_utils.python_dtw_score_debug(reference, query)
+    print("DTWax:")
+    print(dtwax_matrix)
+    print("Python:")
+    print(python_matrix)
+    return python_score == dtwax_scores[0]

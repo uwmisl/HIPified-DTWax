@@ -63,6 +63,8 @@ int main(int argc, char **argv)
 // MQ: There are other ones I should be checking here, but I haven't teased them apart yet
 #ifdef HIP_DEBUG
   printf("REF_LEN=%0d\n", REF_LEN);
+  printf("QUERY_LEN=%0d\n", QUERY_LEN);
+  printf("NUM_READS=%0d\n", NUM_READS);
   printf("REF_TILE_SIZE=%0d\n", REF_TILE_SIZE);
   printf("(REF_LEN / REF_TILE_SIZE)=%0d\n", (REF_LEN / REF_TILE_SIZE));
   printf("SEGMENT_SIZE=%0d\n", SEGMENT_SIZE);
@@ -80,6 +82,12 @@ int main(int argc, char **argv)
     return 1;
   }
 
+  if (REF_LEN % REF_TILE_SIZE != 0)
+  {
+    std::cerr << "Error: REF_BATCH is fractional. Check REF_LEN, SEGMENT_SIZE, and WARP_SIZE." << std::endl;
+    return 1;
+  }
+
   // Storage on host (CPU) and device (GPU)
   value_ht *host_ref,               // Reference squiggle on CPU
       *temp_host_ref,               // Reference will be temporarily stored here, prior to memory coalescing
@@ -88,9 +96,7 @@ int main(int argc, char **argv)
       *device_ref,                  // One reference across all streams
       *device_query[STREAM_NUM],    // One device_query per stream
       *device_dist[STREAM_NUM],     // One device_dist (distance results) per stream
-      *device_last_row[STREAM_NUM]; // Last (column?) of sub-matrix (one per stream)
-
-  // raw_t *query_squiggle = NULL;
+      *device_last_row[STREAM_NUM]; // Last row of sub-matrix (one per stream)
 
   // ~~~
   // Memory Allocations
@@ -141,7 +147,7 @@ int main(int argc, char **argv)
   {
     for (index_t j = 0; j < QUERY_LEN; j++)
     {
-      std::cout << host_query[i * NUM_READS + j] << " ";
+      std::cout << host_query[i * QUERY_LEN + j] << " ";
     }
     std::cout << std::endl;
   }
@@ -265,7 +271,7 @@ int main(int argc, char **argv)
   ASSERT(hipDeviceSynchronize());
   TIMERSTOP_HIP(concurrent_DTW_kernel_launch, NUM_READS)
 
-// Print final output
+  // Print final output
   std::cout << "Results:\n";
   std::cout << "QUERY_LEN\t"
             << "REF_LEN\t"
@@ -274,7 +280,6 @@ int main(int argc, char **argv)
   {
     printf("%ld\t%d\t%d\t%.2f\n", j, QUERY_LEN, REF_LEN, HALF2FLOAT(host_dist[j]));
   }
-
 
   // Free remaining memory
   TIMERSTART(free)

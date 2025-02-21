@@ -7,7 +7,7 @@ importlib.reload(tests)
 
 def get_all_tests():
     all_functions = inspect.getmembers(tests, predicate=inspect.isfunction)
-    # There are some helper functions that shouldn't be included as a test to run
+    # There are some helper functions beginning with '_' that shouldn't be included as a test to run
     tests_to_run = [func for name, func in all_functions if not name.startswith('_')]
     return tests_to_run
 
@@ -18,13 +18,17 @@ def main():
         # tests.r256_q64,
         # tests.r64_q256,
         # tests.r256_q256,
-        # tests.r256_q256_seg4,
-        # tests.r10k_q5k_seg8_count8,
+        # tests.r38k_q1728_count20,
         # tests.r256_q256_seg4_count4,
         # tests.random_r64_q64,
+        
         # tests.protein_id,
+        # tests.failing_ints,
+        
         # tests.random_ints,
-        tests.failing_int
+        # tests.random_ints_fast,
+        tests.random_ints_thorough,
+        tests.by_data_file,
     ]
     
     # Alternately, this will run all tests, even ones not specified above
@@ -34,7 +38,7 @@ def main():
     passing_tests = 0
     for i, test in enumerate(tests_to_run):
         print("~~~~~~~~")
-        print(f"Test {i}: {test.__name__}")
+        print(f"Test {i+1}: {test.__name__}")
         print("~~~~~~~~")
         result = test()
         if result:

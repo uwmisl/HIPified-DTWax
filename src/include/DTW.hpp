@@ -26,9 +26,6 @@ All rights reserved. # SPDX-License-Identifier: LicenseRef-NvidiaProprietary
  */
 #ifndef DTW_HPP
 #define DTW_HPP
-#ifdef FP16
-#include <hip/hip_fp16.h>
-#endif
 #include <hip/hip_runtime.h>
 #include "datatypes.hpp"
 namespace FullDTW

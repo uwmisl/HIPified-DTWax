@@ -1,15 +1,20 @@
 #!/bin/bash
 
-# Ensure a filename argument is provided
-if [ $# -lt 1 ]; then
-  echo "Error: Missing argument. Usage: $0 <filename>"
-  exit 1
-fi
+# Parse arguments (filename, -debug, -segment_size)
+debug_flag="" segment_size=1
+while [ $# -gt 0 ]; do
+  case $1 in
+    -debug) debug_flag="debug"; shift ;;
+    -segment_size) segment_size=$2; shift 2 ;;
+    *) file=$1; shift ;;
+  esac
+done
+
+# Filename is required
+[ -z "$file" ] && { echo "Error: Missing filename." >&2; exit 1; }
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_name=$(basename "$0")
-file="$1"
-segment_size=${2:-1} # optional argument, defaults to 1
 
 # Check if the file exists
 if [ ! -f "$file" ]; then
@@ -74,8 +79,8 @@ if ! cd $src_dir; then
 fi
 
 # Run make
-if make clean; make debug; then
-  echo -e "Successfully built.\nTo run, do ./main $file"
+if make clean; make $debug_flag; then
+  echo -e "Successfully built.\n"
 else
   echo "Error: Build failed."  >&2
   exit 1
