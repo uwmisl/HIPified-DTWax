@@ -28,7 +28,7 @@ def main():
         # tests.random_ints,
         # tests.random_ints_fast,
         tests.random_ints_thorough,
-        tests.by_data_file,
+        # tests.by_data_file,
     ]
     
     # Alternately, this will run all tests, even ones not specified above

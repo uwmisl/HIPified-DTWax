@@ -3,6 +3,8 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+from multiprocessing import Pool
+import functools
 
 # Force reload of test_utils.py
 import importlib
@@ -101,30 +103,22 @@ def by_data_file():
         for line in inFile:
             queries.append(list(map(float, line.strip().split())))
     dtwax_scores, dtwax_stdout = test_utils.launch_DTWax(file_path, segment_size=2, debug=True)
-    dtwax_matrix = test_utils.process_stdout(dtwax_stdout, len(reference), len(queries[0]))
-    python_score, python_matrix = test_utils.python_dtw_score_debug(reference, queries[0])
-    print(f"DTWax: (score={dtwax_scores[0]}) (dims={dtwax_matrix.shape})")
-    # print(dtwax_matrix)
-    print(f"Python: (score={python_score}) (dims={python_matrix.shape})")
-    # print(python_matrix)
-    print(dtwax_matrix[0:4,126:130] == python_matrix[0:4,126:130])
-    print(dtwax_matrix[0:4,126:130])
-    print(python_matrix[0:4,126:130])
-    diff = dtwax_matrix != python_matrix
-    cmap = mcolors.ListedColormap(['#5ab4ac', '#d8b365'])
-    norm = mcolors.BoundaryNorm([0, 0.5, 1], cmap.N)
-    plt.imshow(diff, cmap=cmap, norm=norm)
-    plt.gca().xaxis.set_label_position('top')
-    plt.gca().xaxis.tick_top()
-    plt.xlabel('reference')
-    plt.ylabel('query')
-
-    cbar = plt.colorbar(label='Difference', ticks=[0, 1])
-    cbar.ax.set_yticklabels(['correct value', 'incorrect value'])
-
-    plt.title('Matrix Differences')
-    plt.savefig('cost_matrix_diff.png')
-    plt.close()
+    dtwax_matrices = test_utils.process_stdout(dtwax_stdout, len(reference), len(queries[0]), len(queries))
+    for i, query in enumerate(queries):
+        python_score, python_matrix = test_utils.python_dtw_score_debug(reference, query)
+        diff = dtwax_matrices[i] != python_matrix
+        cmap = mcolors.ListedColormap(['#5ab4ac', '#d8b365'])
+        norm = mcolors.BoundaryNorm([0, 0.5, 1], cmap.N)
+        plt.imshow(diff, cmap=cmap, norm=norm)
+        plt.gca().xaxis.set_label_position('top')
+        plt.gca().xaxis.tick_top()
+        plt.xlabel('reference')
+        plt.ylabel('query')
+        cbar = plt.colorbar(label='Difference', ticks=[0, 1])
+        cbar.ax.set_yticklabels(['correct value', 'incorrect value'])
+        plt.title('Matrix Differences')
+        plt.savefig(f'cost_matrix_diff_{i}.png')
+        plt.close()
 
     return python_score == dtwax_scores[0]
 
@@ -138,31 +132,63 @@ def random_ints_fast():
     return test_utils.compare_scores(dtwax_scores, python_scores)
 
 def random_ints_thorough():
-    segment_size = 1
+    segment_size = 2
     reference = np.random.randint(0, 2, 64*segment_size*2, dtype=np.int32)
     queries = np.random.randint(0, 2, (10, 64*2), dtype=np.int32)
     file_path = test_utils.write_temp_data(reference, queries)
     dtwax_scores, std_out = test_utils.launch_DTWax(file_path, segment_size, debug=True)
-    # dtwax_matrix = test_utils.process_stdout(std_out)
-    python_scores = test_utils.launch_python_dtw(file_path)
-    # python_score, python_matrix = test_utils.python_dtw_score_debug(reference, queries[0])
-    passing, mismatch = test_utils.compare_scores_get_mismatch(dtwax_scores, python_scores)
-    if mismatch is not None:
-        script_dir = os.path.dirname(os.path.realpath(__file__))
-        failing_file_path = os.path.join(script_dir, "failing_ints.txt")
-        with open(failing_file_path, "w") as outFile:
-            outFile.write(" ".join(map(str, reference)) + "\n")
-            outFile.write(" ".join(map(str, queries[mismatch])) + "\n")
-        print(f"Failing case written to {failing_file_path}")
-        
-    # This doesn't necessarily use a passing case, it assumes the first query passed...
+    dtwax_matrices = test_utils.process_stdout(std_out, len(reference), len(queries[0]), len(queries))
+    dtwax_results = zip(dtwax_scores, dtwax_matrices)
+
+    python_dtw = functools.partial(test_utils.python_dtw_score_debug, reference)
+    with Pool() as pool:
+        python_results = pool.map(python_dtw, queries)
+
+    def compare_results(x,y):
+        score_x, matrix_x = x
+        score_y, matrix_y = y
+        return (score_x == score_y) and np.array_equal(matrix_x, matrix_y)
+    
+    comparisons = [compare_results(d, p) for d, p in zip(dtwax_results, python_results)]
+    print(f"{np.sum(comparisons)}/{len(comparisons)} cost matrices matched")
+    false_indices = [i for i, val in enumerate(comparisons) if not val][:10]
     script_dir = os.path.dirname(os.path.realpath(__file__))
-    passing_file_path = os.path.join(script_dir, "passing_ints.txt")
-    with open(passing_file_path, "w") as outFile:
-        outFile.write(" ".join(map(str, reference)) + "\n")
-        outFile.write(" ".join(map(str, queries[0])) + "\n")
-    print(f"Passing case written to {passing_file_path}")
-    return passing
+    for i in false_indices:
+        diff = dtwax_matrices[i] != python_results[i][1]
+        cmap = mcolors.ListedColormap(['#5ab4ac', '#d8b365'])
+        norm = mcolors.BoundaryNorm([0, 0.5, 1], cmap.N)
+        plt.imshow(diff, cmap=cmap, norm=norm)
+        plt.gca().xaxis.set_label_position('top')
+        plt.gca().xaxis.tick_top()
+        plt.xlabel('reference')
+        plt.ylabel('query')
+        cbar = plt.colorbar(label='Difference', ticks=[0, 1])
+        cbar.ax.set_yticklabels(['correct value', 'incorrect value'])
+        plt.title('Matrix Differences')
+        file_path = os.path.join(script_dir, f'./matrix_diffs/cost_matrix_diff_{i}.png')
+        plt.savefig(file_path)
+        print(f"Saved matrix diff plot to {file_path}")
+        plt.close()
+        
+    return np.all(comparisons)
+
+    # passing, mismatch = test_utils.compare_scores_get_mismatch(dtwax_scores, python_scores)
+    # if mismatch is not None:
+    #     script_dir = os.path.dirname(os.path.realpath(__file__))
+    #     failing_file_path = os.path.join(script_dir, "failing_ints.txt")
+    #     with open(failing_file_path, "w") as outFile:
+    #         outFile.write(" ".join(map(str, reference)) + "\n")
+    #         outFile.write(" ".join(map(str, queries[mismatch])) + "\n")
+    #     print(f"Failing case written to {failing_file_path}")
+        
+    # # This doesn't necessarily use a passing case, it assumes the first query passed...
+    # script_dir = os.path.dirname(os.path.realpath(__file__))
+    # passing_file_path = os.path.join(script_dir, "passing_ints.txt")
+    # with open(passing_file_path, "w") as outFile:
+    #     outFile.write(" ".join(map(str, reference)) + "\n")
+    #     outFile.write(" ".join(map(str, queries[0])) + "\n")
+    # print(f"Passing case written to {passing_file_path}")
+    # return passing
 
 def protein_id():
     script_dir = os.path.dirname(os.path.realpath(__file__))

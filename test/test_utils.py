@@ -12,14 +12,14 @@ def run_test(reference, queries, segment_size=1):
     python_scores = launch_python_dtw(data_file)
     return compare_scores(dtwax_scores, python_scores)
 
-def process_stdout(dtwax_stdout, ref_len, query_len):
-    dtw_matrix = np.full((query_len, ref_len), np.nan)
+def process_stdout(dtwax_stdout, ref_len, query_len, num_queries):
+    dtw_matrices = [np.full((query_len, ref_len), np.nan) for _ in range(num_queries)]
     for line in dtwax_stdout:
-        match = re.match(r"\[(\d+),(\d+)\]=([\d.]+)", line.strip())
+        match = re.match(r"\[(\d+),(\d+),(\d+)\]=([\d.]+)", line.strip())
         if match:
-            x, y, z = map(float, match.groups())
-            dtw_matrix[int(x), int(y)] = z
-    return dtw_matrix
+            x, y, z, val = map(float, match.groups())
+            dtw_matrices[int(x)][int(y), int(z)] = val
+    return dtw_matrices
 
 def write_temp_data(reference, queries):
     # Get the location for the test datasets

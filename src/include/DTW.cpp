@@ -190,7 +190,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         {
           int column = thread_id * SEGMENT_SIZE + i;
           int row = query_batch * QUERY_BATCH_SIZE + wave - thread_id - 1;
-          printf("[%0d,%0d]=%.2f\n", row, column, penalty_here[i]);
+          printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
         }
 #endif
       }
@@ -319,7 +319,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
           {
             int column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
             int row = query_batch * QUERY_BATCH_SIZE + (wave - thread_id - 1);
-            printf("[%0d,%0d]=%.2f\n", row, column, penalty_here[i]);
+            printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
           }
 #endif
         }
@@ -466,7 +466,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         {
           int column = REF_BATCH_MINUS_ONE * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
           int row = query_batch * QUERY_BATCH_SIZE + (wave - thread_id - 1);
-          printf("[%0d,%0d]=%.2f\n", row, column, penalty_here[i]);
+          printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
         }
 #endif
         // only update penalty_diag if you actually participated in the wave
