@@ -222,7 +222,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         penalty_here[i] =
             device_last_row[block_id * REF_LEN + thread_id + i * WARP_SIZE];
       }
-
+      penalty_diag = __shfl_up(penalty_here[SEGMENT_SIZE - 1], 1);
       if (thread_id == WARP_SIZE_MINUS_ONE)
       {
         // When on query_batch > 0, we penalty_here is the last row of the submatrix above this one
@@ -242,6 +242,10 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         // For the very first cell in the matrix, there is no penalty coming from the diagonal
         penalty_diag = 0.0f;
       }
+      else
+      {
+        penalty_diag = INFINITY;
+      }
     }
 
     // Fill in the matrix in wavefront parallel manner
@@ -259,6 +263,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
                                       block_id, 0
 #endif
         );
+        penalty_diag = penalty_left;
         // #ifdef HIP_DEBUG
         //         for (auto i = 0; i < SEGMENT_SIZE; i++)
         //         {
@@ -270,7 +275,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
 
       // ~~~~ Update variables for next wave ~~~~
       query_val = __shfl_up(query_val, 1);
-      penalty_diag = penalty_left;
+      // penalty_diag = penalty_left;
       penalty_left = __shfl_up(penalty_here[SEGMENT_SIZE - 1], 1);
 
       // ~~~~ Special case updates ~~~~
@@ -326,13 +331,13 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
     {
       // Initialize penalties
       penalty_left = INFINITY;
-      penalty_diag = INFINITY;
       if (query_batch == 0)
       {
         for (auto i = 0; i < SEGMENT_SIZE; i++)
         {
           penalty_here[i] = INFINITY;
         }
+        penalty_diag = INFINITY;
       }
       else
       {
@@ -342,6 +347,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
               device_last_row[block_id * REF_LEN + ref_batch * REF_TILE_SIZE +
                               thread_id + i * WARP_SIZE];
         }
+        penalty_diag = __shfl_up(penalty_here[SEGMENT_SIZE - 1], 1);
         // MQ: Attempt and getting the correct diag element
         if (thread_id == 0)
         {
@@ -390,6 +396,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
           //             printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
           //           }
           // #endif
+          penalty_diag = penalty_left;
         }
 
         // new_query_val buffer is empty, reload
@@ -422,14 +429,11 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         else if ((wave >= NUM_WAVES_BY_WARP_SIZE) && (thread_id == WARP_SIZE_MINUS_ONE))
         {
           // MQ: Changed from (wave - TWICE_WARP_SIZE_MINUS_ONE) to (wave - WARP_SIZE), differing from
-          // the main branch, idk if still correct, but was getting oom errors
+          // the main branch, idk if still correct, but was getting out of bounds errors
           penalty_last_col[(wave - WARP_SIZE)] = penalty_here[RESULT_REG];
         }
 
         new_query_val = __shfl_down(new_query_val, 1);
-
-        // Transfer border cell info
-        penalty_diag = penalty_left;
         penalty_left = __shfl_up(penalty_here[SEGMENT_SIZE - 1], 1);
         if (thread_id == 0)
         {
@@ -450,13 +454,13 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
     // Last sub-matrix (ref batch) calculation for this query batch
     // Initialize penalties
     penalty_left = INFINITY;
-    penalty_diag = INFINITY;
     if (query_batch == 0)
     {
       for (auto i = 0; i < SEGMENT_SIZE; i++)
       {
         penalty_here[i] = INFINITY;
       }
+      penalty_diag = INFINITY;
     }
     else
     {
@@ -468,6 +472,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
             device_last_row[block_id * REF_LEN + REF_BATCH_MINUS_ONE * REF_TILE_SIZE +
                             thread_id + i * WARP_SIZE];
       }
+      penalty_diag = __shfl_up(penalty_here[SEGMENT_SIZE - 1], 1);
       // MQ: Attempt at getting the correct diag element
       if (thread_id == 0)
       {
