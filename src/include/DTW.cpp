@@ -37,7 +37,12 @@ __device__ __forceinline__ void
 compute_segment(idxt &wave, const idx_t &thread_id, val_t &query_val,
                 val_t (&ref)[SEGMENT_SIZE], val_t &penalty_left,
                 val_t (&penalty_here)[SEGMENT_SIZE], val_t &penalty_diag,
-                val_t (&penalty_temp)[2], idxt query_batch)
+                val_t (&penalty_temp)[2], idxt query_batch
+#ifdef HIP_DEBUG
+                ,
+                idx_t block_id, idxt ref_batch
+#endif
+)
 {
   penalty_temp[0] = penalty_here[0];
   // (thread_id != (wave - 1)) The wave counting starts at 1
@@ -47,10 +52,18 @@ compute_segment(idxt &wave, const idx_t &thread_id, val_t &query_val,
   // When query_batch > 0, we are also working on interior matrix elements.
   if ((thread_id != (wave - 1)) || (query_batch))
   {
-    // The very first cell uses penalty_left and penalty_diag, and then the first value
-    // of penalty_here (representing the penalty of the cell directly above this one)
+// The very first cell uses penalty_left and penalty_diag, and then the first value
+// of penalty_here (representing the penalty of the cell directly above this one)
+#ifdef HIP_DEBUG
+    int column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE;
+    int row = query_batch * QUERY_BATCH_SIZE + wave - thread_id - 1;
+    printf("[%0d,%0d,%0d]=(%.2f,%.2f,%.2f)\n", block_id, row, column, penalty_left, penalty_here[0], penalty_diag);
+#endif
     penalty_here[0] = COST_FUNCTION(query_val, ref[0], penalty_left,
                                     penalty_here[0], penalty_diag);
+#ifdef HIP_DEBUG
+    printf("[%0d,%0d,%0d]=%.2f,\n", block_id, row, column, penalty_here[0]);
+#endif
 
 #if ((SEGMENT_SIZE % 2) == 0)
     for (int i = 1; i < SEGMENT_SIZE - 2; i += 2)
@@ -61,19 +74,40 @@ compute_segment(idxt &wave, const idx_t &thread_id, val_t &query_val,
 #endif
       // Updates the new penalty_here values for indices i and i+1
       penalty_temp[1] = penalty_here[i];
+#ifdef HIP_DEBUG
+      column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
+      printf("[%0d,%0d,%0d]=(%.2f,%.2f,%.2f)\n", block_id, row, column, penalty_here[i - 1], penalty_here[i], penalty_temp[0]);
+#endif
       penalty_here[i] =
           COST_FUNCTION(query_val, ref[i], penalty_here[i - 1],
                         penalty_here[i], penalty_temp[0]);
+#ifdef HIP_DEBUG
+      printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
+#endif
 
       penalty_temp[0] = penalty_here[i + 1];
+#ifdef HIP_DEBUG
+      column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i + 1;
+      printf("[%0d,%0d,%0d]=(%.2f,%.2f,%.2f)\n", block_id, row, column, penalty_here[i], penalty_here[i + 1], penalty_temp[1]);
+#endif
       penalty_here[i + 1] =
           COST_FUNCTION(query_val, ref[i + 1], penalty_here[i],
                         penalty_here[i + 1], penalty_temp[1]);
+#ifdef HIP_DEBUG
+      printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i + 1]);
+#endif
     }
 #if ((SEGMENT_SIZE > 1) && ((SEGMENT_SIZE % 2) == 0))
+#ifdef HIP_DEBUG
+    column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + SEGMENT_SIZE - 1;
+    printf("[%0d,%0d,%0d]=(%.2f,%.2f,%.2f)\n", block_id, row, column, penalty_here[SEGMENT_SIZE - 2], penalty_here[SEGMENT_SIZE - 1], penalty_temp[0]);
+#endif
     penalty_here[SEGMENT_SIZE - 1] =
         COST_FUNCTION(query_val, ref[SEGMENT_SIZE - 1], penalty_here[SEGMENT_SIZE - 2],
                       penalty_here[SEGMENT_SIZE - 1], penalty_temp[0]);
+#ifdef HIP_DEBUG
+    printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[SEGMENT_SIZE - 1]);
+#endif
 #endif
   }
 
@@ -83,12 +117,16 @@ compute_segment(idxt &wave, const idx_t &thread_id, val_t &query_val,
   // MQ: Isn't this already handled by the calling function, in the way penalty_here is initialized?
   else
   {
+#ifdef HIP_DEBUG
+    int column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE;
+    int row = query_batch * QUERY_BATCH_SIZE + wave - thread_id - 1;
+    printf("[%0d,%0d,%0d]=(%.2f,%.2f,%.2f)\n", block_id, row, column, penalty_left, INFINITY, penalty_diag);
+#endif
     penalty_here[0] = COST_FUNCTION(query_val, ref[0], penalty_left,
                                     INFINITY, penalty_diag);
-    // if (thread_id == 0 && wave == 1)
-    // {
-    //   penalty_here[0] = COST_FUNCTION(query_val, ref[0], 0, 0, 0);
-    // }
+#ifdef HIP_DEBUG
+    printf("[%0d,%0d,%0d]=%.2f,\n", block_id, row, column, penalty_here[0]);
+#endif
 
 #if ((SEGMENT_SIZE % 2) == 0)
     for (int i = 1; i < SEGMENT_SIZE - 2; i += 2)
@@ -98,17 +136,37 @@ compute_segment(idxt &wave, const idx_t &thread_id, val_t &query_val,
     {
 #endif
       penalty_temp[1] = penalty_here[i];
+#ifdef HIP_DEBUG
+      column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
+      printf("[%0d,%0d,%0d]=(%.2f,%.2f,%.2f)\n", block_id, row, column, penalty_here[i - 1], INFINITY, INFINITY);
+#endif
       penalty_here[i] =
           COST_FUNCTION(query_val, ref[i], penalty_here[i - 1], INFINITY, INFINITY);
-
+#ifdef HIP_DEBUG
+      printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
+#endif
       penalty_temp[0] = penalty_here[i + 1];
+#ifdef HIP_DEBUG
+      column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i + 1;
+      printf("[%0d,%0d,%0d]=(%.2f,%.2f,%.2f)\n", block_id, row, column, penalty_here[i], INFINITY, INFINITY);
+#endif
       penalty_here[i + 1] =
           COST_FUNCTION(query_val, ref[i + 1], penalty_here[i], INFINITY, INFINITY);
+#ifdef HIP_DEBUG
+      printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i + 1]);
+#endif
     }
 #if ((SEGMENT_SIZE > 1) && ((SEGMENT_SIZE % 2) == 0))
+#ifdef HIP_DEBUG
+    column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + SEGMENT_SIZE - 1;
+    printf("[%0d,%0d,%0d]=(%.2f,%.2f,%.2f)\n", block_id, row, column, penalty_here[SEGMENT_SIZE - 2], INFINITY, INFINITY);
+#endif
     penalty_here[SEGMENT_SIZE - 1] =
         COST_FUNCTION(query_val, ref[SEGMENT_SIZE - 1], penalty_here[SEGMENT_SIZE - 2],
                       INFINITY, INFINITY);
+#ifdef HIP_DEBUG
+    printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[SEGMENT_SIZE - 1]);
+#endif
 #endif
   }
 }
@@ -124,59 +182,70 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
   // Penalties
   val_t penalty_temp[2];
   val_t penalty_here[SEGMENT_SIZE];
-  val_t min_segment = INFINITY; // finds min of segment for sDTW
   val_t ref_segment[SEGMENT_SIZE];
 
 #if REF_BATCH > 1
+  // used to store last col of matrix (when reference is broken up into batches)
   __shared__ val_t penalty_last_col[QUERY_BATCH_SIZE];
-  val_t last_col_penalty_shuffled; // used to store last col of matrix (when reference is broken up into batches)
+  val_t last_col_penalty_shuffled;
 #endif
 
 #pragma unroll
   for (idxt query_batch = 0; query_batch < QUERY_BATCH; query_batch++)
   {
+    // ~~~~ Initialization ~~~~
     val_t penalty_left = INFINITY;
     val_t penalty_diag = INFINITY;
-    if (query_batch == 0)
-    {
-      penalty_diag = 0.0f;
-    }
-
     for (int i = 0; i < SEGMENT_SIZE; i++)
     {
-      penalty_here[i] = INFINITY; // For global alignment
+      penalty_here[i] = INFINITY;
     }
     val_t query_val = INFINITY;
     val_t new_query_val =
         query[(block_id * QUERY_LEN) + (query_batch * QUERY_BATCH_SIZE) + thread_id];
-    // Initialize first thread's query_val
-    if (thread_id == 0)
-    {
-      query_val = new_query_val;
-    }
-    new_query_val = __shfl_down(new_query_val, 1);
+
 #pragma unroll
     for (idxt i = 0; i < SEGMENT_SIZE; i++)
     {
       // The reference has been rearranged in ref for memory access optimizations
       // (Hence the striding by 'WARP_SIZE')
       ref_segment[i] = ref[thread_id + i * WARP_SIZE];
+    }
+
+// ~~~~ Special case initialization ~~~~
 #if QUERY_BATCH > 1
-      if (query_batch > 0)
+    if (query_batch > 0)
+    {
+#pragma unroll
+      for (idxt i = 0; i < SEGMENT_SIZE; i++)
       {
         penalty_here[i] =
             device_last_row[block_id * REF_LEN + thread_id + i * WARP_SIZE];
       }
+
+      if (thread_id == WARP_SIZE_MINUS_ONE)
+      {
+        // When on query_batch > 0, we penalty_here is the last row of the submatrix above this one
+        // The last element of this row will be the penalty_diag for the initial cell in the next submatrix
+        // We save this value into dist for the next submatrix (we will overwrite last_row with our own values)
+        dist[block_id] = penalty_here[SEGMENT_SIZE - 1];
+      }
+    }
 #endif
-    }
-    // MQ: Attempt and getting the correct diag element
-    if (thread_id == WARP_SIZE_MINUS_ONE and query_batch > 0)
+
+    if (thread_id == 0)
     {
-      // Save the corner element, it will be used as the penalty_diag for the next batch
-      dist[block_id] = penalty_here[SEGMENT_SIZE - 1];
-      // printf("(176)dist[%0d]=%.2f\n", block_id, penalty_here[SEGMENT_SIZE - 1]);
+      // thread 0 will be using new_query_val right away (other threads will join in later waves)
+      query_val = new_query_val;
+      if (query_batch == 0)
+      {
+        // For the very first cell in the matrix, there is no penalty coming from the diagonal
+        penalty_diag = 0.0f;
+      }
     }
-    // calculate full matrix in wavefront parallel manner, multiple cells per thread
+
+    // Fill in the matrix in wavefront parallel manner
+    new_query_val = __shfl_down(new_query_val, 1);
     for (idxt wave = 1; wave <= NUM_WAVES; wave++)
     {
       // If thead_id is between (wave-QUERY_BATCH_SIZE) and (wave-1), it participates in this wave
@@ -184,32 +253,35 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       {
         compute_segment<idx_t, val_t>(wave, thread_id, query_val, ref_segment,
                                       penalty_left, penalty_here, penalty_diag,
-                                      penalty_temp, query_batch);
+                                      penalty_temp, query_batch
 #ifdef HIP_DEBUG
-        for (auto i = 0; i < SEGMENT_SIZE; i++)
-        {
-          int column = thread_id * SEGMENT_SIZE + i;
-          int row = query_batch * QUERY_BATCH_SIZE + wave - thread_id - 1;
-          printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
-        }
+                                      ,
+                                      block_id, 0
 #endif
+        );
+        // #ifdef HIP_DEBUG
+        //         for (auto i = 0; i < SEGMENT_SIZE; i++)
+        //         {
+        //           column = thread_id * SEGMENT_SIZE + i;
+        //           printf("penalty_here[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
+        //         }
+        // #endif
       }
 
-      // new_query_val buffer is empty, reload
-      // If wave is a multiple of WARP_SIZE
-      // MQ: I don't know why it needs to load a new 'new_query_val' here...
-      // MQ: Also, this goes beyond the length of the query...?
-      if ((wave & WARP_SIZE_MINUS_ONE) == 0) // MQ: I think this is the last wave? maybe??
-      {
-        new_query_val = query[(block_id * QUERY_LEN) + (query_batch * QUERY_BATCH_SIZE) + wave + thread_id];
-      }
-
-      // Shuffle up query_value and penalties for each thread
+      // ~~~~ Update variables for next wave ~~~~
       query_val = __shfl_up(query_val, 1);
       penalty_diag = penalty_left;
       penalty_left = __shfl_up(penalty_here[SEGMENT_SIZE - 1], 1);
 
-      // Edge case adjustments for thread 0
+      // ~~~~ Special case updates ~~~~
+      // When wave is a multiple of WARP_SIZE (WARP_SIZE, 2*WARP_SIZE, ...)
+      // we've processed through all the query values originally loaded into new_query_val
+      // so we need to load the next set of query values.
+      if ((wave & WARP_SIZE_MINUS_ONE) == 0)
+      {
+        new_query_val = query[(block_id * QUERY_LEN) + (query_batch * QUERY_BATCH_SIZE) + wave + thread_id];
+      }
+
       if (thread_id == 0)
       {
         query_val = new_query_val;
@@ -237,14 +309,6 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       }
 
 #endif
-      // Find min of segment and then shuffle up for sDTW
-      if ((wave >= QUERY_BATCH_SIZE) && (query_batch == (QUERY_BATCH - 1)))
-      {
-        if (wave == NUM_WAVES)
-        {
-          min_segment = penalty_here[SEGMENT_SIZE - 1];
-        }
-      }
     }
 
 // write last row to shared memory
@@ -282,12 +346,10 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         if (thread_id == 0)
         {
           penalty_diag = dist[block_id];
-          // printf("(284)penalty_diag=%.2f\n", penalty_diag);
         }
         if (thread_id == WARP_SIZE_MINUS_ONE)
         {
           dist[block_id] = penalty_here[SEGMENT_SIZE - 1];
-          // printf("(289)dist[%0d]=%.2f\n", block_id, penalty_here[SEGMENT_SIZE - 1]);
         }
       }
 
@@ -313,15 +375,21 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         {
           compute_segment<idx_t, val_t>(
               wave, thread_id, query_val, ref_segment, penalty_left,
-              penalty_here, penalty_diag, penalty_temp, query_batch);
+              penalty_here, penalty_diag, penalty_temp, query_batch
 #ifdef HIP_DEBUG
-          for (auto i = 0; i < SEGMENT_SIZE; i++)
-          {
-            int column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
-            int row = query_batch * QUERY_BATCH_SIZE + (wave - thread_id - 1);
-            printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
-          }
+              ,
+              block_id, ref_batch
 #endif
+          );
+
+          // #ifdef HIP_DEBUG
+          //           for (auto i = 0; i < SEGMENT_SIZE; i++)
+          //           {
+          //             int column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
+          //             int row = query_batch * QUERY_BATCH_SIZE + (wave - thread_id - 1);
+          //             printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
+          //           }
+          // #endif
         }
 
         // new_query_val buffer is empty, reload
@@ -367,15 +435,6 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
         {
           penalty_left = penalty_last_col[wave];
         }
-
-        // Find min of segment and then shuffle up for sDTW
-        if ((wave >= QUERY_BATCH_SIZE) && (query_batch == (QUERY_BATCH - 1)))
-        {
-          if (wave == NUM_WAVES)
-          {
-            min_segment = penalty_here[SEGMENT_SIZE - 1];
-          }
-        }
       }
 
 // write last row to smem
@@ -404,26 +463,23 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       for (auto i = 0; i < SEGMENT_SIZE; i++)
       {
         penalty_here[i] =
-            device_last_row[block_id * REF_LEN + REF_LEN - REF_TILE_SIZE +
+            // device_last_row[block_id * REF_LEN + REF_LEN - REF_TILE_SIZE +
+            //                 thread_id + i * WARP_SIZE];
+            device_last_row[block_id * REF_LEN + REF_BATCH_MINUS_ONE * REF_TILE_SIZE +
                             thread_id + i * WARP_SIZE];
       }
       // MQ: Attempt at getting the correct diag element
       if (thread_id == 0)
       {
         penalty_diag = dist[block_id];
-        // printf("(413)(thread %0d) penalty_diag=%.2f\n", thread_id, penalty_diag);
-      }
-      else
-      {
-        penalty_diag = device_last_row[block_id * REF_LEN + REF_LEN - REF_TILE_SIZE + (thread_id - 1)];
-        // printf("(418)(thread %0d) penalty_diag=%.2f\n", thread_id, penalty_diag);
       }
 
-      if (thread_id == WARP_SIZE_MINUS_ONE)
-      {
-        dist[block_id] = penalty_here[SEGMENT_SIZE - 1];
-        // printf("(418)dist[%0d]=%.2f\n", block_id, penalty_here[SEGMENT_SIZE - 1]);
-      }
+      // MQ: I don't think we need to do this in this final ref_batch
+      // if (thread_id == WARP_SIZE_MINUS_ONE)
+      // {
+      //   dist[block_id] = penalty_here[SEGMENT_SIZE - 1];
+      //   // printf("(418)dist[%0d]=%.2f\n", block_id, penalty_here[SEGMENT_SIZE - 1]);
+      // }
     }
 
     // Load next WARP_SIZE query values from memory into new_query_val buffer
@@ -449,26 +505,32 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       // If thread 'thread_id' is participating in this wave, compute it's segment
       if (((wave - QUERY_BATCH_SIZE) <= thread_id) && (thread_id <= (wave - 1)))
       {
+        // #ifdef HIP_DEBUG
+        //         int column = REF_BATCH_MINUS_ONE * REF_TILE_SIZE + thread_id * SEGMENT_SIZE;
+        //         int row = query_batch * QUERY_BATCH_SIZE + (wave - thread_id - 1);
+        //         if (column == 65 && row == 64)
+        //         {
+        //           printf("(65,64)penalty_diag=%.2f, penalty_left=%.2f, penalty_here[0]=%.2f, q=%.2f, r=%.2f, thread%0d\n",
+        //                  penalty_diag, penalty_left, penalty_here[0], query_val, ref_segment[0], thread_id);
+        //         }
+        // #endif
+        compute_segment<idx_t, val_t>(
+            wave, thread_id, query_val, ref_segment, penalty_left,
+            penalty_here, penalty_diag, penalty_temp, query_batch
 #ifdef HIP_DEBUG
-        int column = REF_BATCH_MINUS_ONE * REF_TILE_SIZE + thread_id * SEGMENT_SIZE;
-        int row = query_batch * QUERY_BATCH_SIZE + (wave - thread_id - 1);
-        if (column == 65 && row == 64)
-        {
-          printf("(65,64)penalty_diag=%.2f, penalty_left=%.2f, penalty_here[0]=%.2f, q=%.2f, r=%.2f, thread%0d\n",
-                 penalty_diag, penalty_left, penalty_here[0], query_val, ref_segment[0], thread_id);
-        }
+            ,
+            block_id,
+            REF_BATCH_MINUS_ONE
 #endif
-        compute_segment<idx_t, val_t>(wave, thread_id, query_val, ref_segment,
-                                      penalty_left, penalty_here, penalty_diag,
-                                      penalty_temp, query_batch);
-#ifdef HIP_DEBUG
-        for (auto i = 0; i < SEGMENT_SIZE; i++)
-        {
-          int column = REF_BATCH_MINUS_ONE * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
-          int row = query_batch * QUERY_BATCH_SIZE + (wave - thread_id - 1);
-          printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
-        }
-#endif
+        );
+        // #ifdef HIP_DEBUG
+        //         for (auto i = 0; i < SEGMENT_SIZE; i++)
+        //         {
+        //           int column = REF_BATCH_MINUS_ONE * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
+        //           int row = query_batch * QUERY_BATCH_SIZE + (wave - thread_id - 1);
+        //           printf("[%0d,%0d,%0d]=%.2f\n", block_id, row, column, penalty_here[i]);
+        //         }
+        // #endif
         // only update penalty_diag if you actually participated in the wave
         penalty_diag = penalty_left;
       }
@@ -496,14 +558,8 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       {
         penalty_left = penalty_last_col[wave];
       }
-
-      // Find min of segment and then shuffle up for sDTW
-      if ((wave >= QUERY_BATCH_SIZE) && (query_batch == (QUERY_BATCH - 1)))
-      {
-        if (wave == (NUM_WAVES))
-          min_segment = penalty_here[SEGMENT_SIZE - 1];
-      }
     }
+
     // write last row to smem
 #if QUERY_BATCH > 1
     for (idxt i = 0; i < SEGMENT_SIZE; i++)
@@ -511,6 +567,12 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
       device_last_row[block_id * REF_LEN + REF_LEN - REF_TILE_SIZE + thread_id +
                       i * WARP_SIZE] = penalty_here[i];
     }
+
+    // for (idxt i = 0; i < SEGMENT_SIZE; i++)
+    // {
+    //   device_last_row[block_id * REF_LEN + REF_BATCH_MINUS_ONE * REF_TILE_SIZE +
+    //                   thread_id + i * WARP_SIZE] = penalty_here[i];
+    // }
 #endif
 
 #endif
@@ -520,19 +582,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
   // return result
   if (thread_id == WARP_SIZE_MINUS_ONE)
   {
-    dist[block_id] = min_segment;
-    // printf("dist[%0d]=%.7f\n", block_id, min_segment);
-    // dist[block_id] = penalty_here[SEGMENT_SIZE-1]; // For global alignment?
-
-#ifdef HIP_DEBUG
-    printf("min_segment=%0f, tid=%0d, blockid=%0d\n", min_segment, thread_id,
-           block_id);
-    printf("penalty_temp[0]=%.2f, penalty_temp[1]=%.2f\n", penalty_temp[0], penalty_temp[1]);
-    for (auto i = 0; i < SEGMENT_SIZE; i++)
-    {
-      printf("penalty_here[%0d]=%.2f\n", i, penalty_here[i]);
-    }
-#endif
+    dist[block_id] = penalty_here[SEGMENT_SIZE - 1];
   }
   return;
 }
