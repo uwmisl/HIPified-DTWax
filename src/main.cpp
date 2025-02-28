@@ -59,8 +59,6 @@ int main(int argc, char **argv)
   }
   std::string data_file = argv[1];
 
-// A number of important parameters are defined in data_dims.hpp, we sanity check them here
-// MQ: There are other ones I should be checking here, but I haven't teased them apart yet
 #ifdef HIP_DEBUG
   printf("REF_LEN=%0d\n", REF_LEN);
   printf("QUERY_LEN=%0d\n", QUERY_LEN);
@@ -70,6 +68,8 @@ int main(int argc, char **argv)
   printf("SEGMENT_SIZE=%0d\n", SEGMENT_SIZE);
   printf("WARP_SIZE=%0d\n", WARP_SIZE);
 #endif
+// A number of important parameters are defined in data_dims.hpp, we sanity check them here
+// MQ: There are other ones I should be checking here, but I haven't teased them apart yet
   if (QUERY_LEN < QUERY_BATCH_SIZE)
   {
     std::cerr << "Error: The QUERY_BATCH_SIZE must be no larger than QUERY_LEN" << std::endl;
@@ -85,6 +85,12 @@ int main(int argc, char **argv)
   if (REF_LEN % REF_TILE_SIZE != 0)
   {
     std::cerr << "Error: REF_BATCH is fractional. Check REF_LEN, SEGMENT_SIZE, and WARP_SIZE." << std::endl;
+    return 1;
+  }
+
+  if (QUERY_LEN % QUERY_BATCH_SIZE != 0)
+  {
+    std::cerr << "Error: QUERY_LEN does not divide evenly into QUERY_BATCH_SIZE" << std::endl;
     return 1;
   }
 
@@ -201,7 +207,7 @@ int main(int argc, char **argv)
   //-------------total batches of concurrent workload to & fro
   // device---------------//
 
-  TIMERSTART_HIP(concurrent_DTW_kernel_launch)
+  TIMERSTART(concurrent_DTW_kernel_launch)
   // Ceiling arithmetic to calculate total number of batches needed (last batch may be partially filled)
   idxt batch_count = (NUM_READS + (BLOCK_NUM * STREAM_NUM) - 1) / (BLOCK_NUM * STREAM_NUM);
   std::cout << "Batch count: " << batch_count << " num_reads:" << NUM_READS
@@ -269,7 +275,7 @@ int main(int argc, char **argv)
 
   // Wait on all active streams
   ASSERT(hipDeviceSynchronize());
-  TIMERSTOP_HIP(concurrent_DTW_kernel_launch, NUM_READS)
+  TIMERSTOP(concurrent_DTW_kernel_launch)
 
   // Print final output
   std::cout << "Results:\n";

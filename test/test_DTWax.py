@@ -18,17 +18,19 @@ def main():
         # tests.r256_q64,
         # tests.r64_q256,
         # tests.r256_q256,
-        # tests.r38k_q1728_count20,
         # tests.r256_q256_seg4_count4,
-        # tests.random_r64_q64,
-        
+        # tests.r38k_q1728_count20,
         # tests.protein_id,
+        # tests.random_ints_fast,
+        # tests.random_ints_thorough,
+        
         # tests.failing_ints,
         
         # tests.random_ints,
-        # tests.random_ints_fast,
-        tests.random_ints_thorough,
         # tests.by_data_file,
+        # tests.by_data_file_single_query,
+        tests.debug_a_test,
+        # tests.performance_test
     ]
     
     # Alternately, this will run all tests, even ones not specified above
