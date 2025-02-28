@@ -1,10 +1,6 @@
 import tests
 import inspect
 
-# Force reload of run_test.py
-import importlib
-importlib.reload(tests)
-
 def get_all_tests():
     all_functions = inspect.getmembers(tests, predicate=inspect.isfunction)
     # There are some helper functions beginning with '_' that shouldn't be included as a test to run
@@ -14,22 +10,19 @@ def get_all_tests():
 def main():
     # Comment out the tests you want to skip here in this list
     tests_to_run = [
-        # tests.r64_q64,
-        # tests.r256_q64,
-        # tests.r64_q256,
-        # tests.r256_q256,
-        # tests.r256_q256_seg4_count4,
-        # tests.r38k_q1728_count20,
+        # tests.fast_sweep,
+        # tests.thorough_sweep,
+        tests.rlarge_qlarge,
         # tests.protein_id,
         # tests.random_ints_fast,
         # tests.random_ints_thorough,
         
-        # tests.failing_ints,
+        # tests.failing_again,
         
         # tests.random_ints,
         # tests.by_data_file,
         # tests.by_data_file_single_query,
-        tests.debug_a_test,
+        # tests.debug_a_test,
         # tests.performance_test
     ]
     

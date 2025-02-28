@@ -17,119 +17,118 @@ importlib.reload(test_utils)
 # rX = reference of length X
 # qX = queries of length X
 # segX = using a segment size of X
-# countX = using X number of queries
-
-def _run_4_subtests_old(ref_len, query_len, segment_size=1):
-    print("There are 4 sub-tests which check that DTWax is doing global alignment")
-    print("Subtest 1: Reference is all 1s, Query is all 1s except query[0]=5")
-    test_passes = True
-    reference = [1]*ref_len
-    query = [1]*query_len
-    query[0] = 5
-    queries = [query]
-    subtest_passed = test_utils.run_test(reference, queries, segment_size)
-    test_passes = test_passes and subtest_passed
-
-    print("Subtest 2: Reference is all 1s, Query is all 1s except query[-1]=5")
-    reference = [1]*ref_len
-    query = [1]*query_len
-    query[-1] = 5
-    queries = [query]
-    subtest_passed = test_utils.run_test(reference, queries, segment_size)
-    test_passes = test_passes and subtest_passed
-
-    print(
-        "Subtest 3: Reference is all 1s except reference[0]=5, Query is all 1s")
-    reference = [1]*ref_len
-    query = [1]*query_len
-    reference[0] = 5
-    queries = [query]
-    subtest_passed = test_utils.run_test(reference, queries, segment_size)
-    test_passes = test_passes and subtest_passed
-
-    print(
-        "Subtest 4: Reference is all 1s except reference[-1]=5, Query is all 1s")
-    reference = [1]*ref_len
-    query = [1]*query_len
-    reference[-1] = 5
-    queries = [query]
-    subtest_passed = test_utils.run_test(reference, queries, segment_size)
-    test_passes = test_passes and subtest_passed
-
-    return test_passes
-
-def _run_test_fast(ref_len, query_len, num_queries=1, segment_size=1):
-    print(f"ref length={ref_len}, query len={query_len}, num_queries={num_queries}, segment size={segment_size}")
+def _run_test(ref_len, query_len, num_queries=1, segment_size=1, thorough=False, save_failures=False):
+    print(f"ref length={ref_len}, query len={query_len}, num_queries={num_queries}, segment size={segment_size}, thorough={thorough}")
     reference = np.random.rand(ref_len).astype(np.float32)
     queries = np.random.rand(num_queries, query_len).astype(np.float32)
-    return test_utils.run_test(reference, queries, segment_size)
     
+    # reference = np.random.randint(0, 2, ref_len, dtype=np.int32)
+    # queries = np.random.randint(0, 2, (num_queries, query_len), dtype=np.int32)
+    
+    return test_utils.run_test(reference, queries, segment_size, thorough, save_failures)
 
-def r64_q64():
-    return _run_test_fast(64, 64)
+# def _run_test_thorough(ref_len, query_len, num_queries=1, segment_size=1):
+#     print(f"ref length={ref_len}, query len={query_len}, num_queries={num_queries}, segment size={segment_size}")
+#     reference = np.random.rand(ref_len).astype(np.float32)
+#     queries = np.random.rand(num_queries, query_len).astype(np.float32)
+#     return test_utils.run_test(reference, queries, segment_size)
 
-def r256_q64():
-    return _run_test_fast(256, 64)
+# def _save_test_case(reference, query, dtwax_results, python_results, directory="."):
+#     dtwax_score, dtwax_matrices = dtwax_results
+#     python_score, python_matrices = python_results
+#     # Save the reference and query into a data file
+#     script_dir = os.path.dirname(os.path.realpath(__file__))
+#     os.makedirs(os.path.join(script_dir, f"{directory}"), exist_ok=True)
+#     file_path = os.path.join(script_dir, f"{directory}/data.txt")
+#     with open(file_path, "w") as outFile:
+#         outFile.write(" ".join(map(str, reference)) + "\n")
+#         outFile.write(" ".join(map(str, query)) + "\n")
 
-def r64_q256():
-    return _run_test_fast(64, 256)
+#     # Save the figure
+#     file_path = os.path.join(script_dir, f"{directory}/diffs.png")
+#     title = f"python:{python_score}, dtwax={dtwax_score}"
+#     _save_diffs_plot(dtwax_matrices, python_matrices, file_path, title)
+    
+#     # Save the cost matrices
+#     file_path = os.path.join(script_dir, f"{directory}/matrices.p")
+#     with open(file_path, "wb") as f:
+#         pickle.dump((dtwax_matrices, python_matrices), f)
 
-def r256_q256():
-    return _run_test_fast(256, 256)
+# def _save_diffs_plot(dtwax_matrices, python_matrices, file_path='cost_matrices_diff.png', plot_title="Matrix differences"):
+#     diffs = [x == y for x, y in zip(dtwax_matrices, python_matrices)]
+#     titles = ["Costs", "Costs left", "Costs top", "Costs diag"]
+#     cmap = mcolors.ListedColormap(['#D1D1D1', '#444444'])
+#     norm = mcolors.BoundaryNorm([0, 0.5, 1], cmap.N)
+#     fig, axes = plt.subplots(2, 2, figsize=(10, 10))
+#     for ax, diff, title in zip(axes.flat, diffs, titles):
+#         im = ax.imshow(diff, cmap=cmap, norm=norm)
+#         ax.xaxis.tick_top()
+#         ax.set_title(title)
+#     legend_patches = [
+#         mpatches.Patch(color=cmap.colors[1], label='Correct value'),
+#         mpatches.Patch(color=cmap.colors[0], label='Incorrect value')
+#     ]
 
-def r256_q256_seg4_count4():
-    return _run_test_fast(256, 256, num_queries=4, segment_size=4)
-
-def r38k_q1728_count20():
-    return _run_test_fast(38336, 1728, num_queries=20, segment_size=1)
-
-
-def _save_diffs_plot(dtwax_matrices, python_matrices, file_path='cost_matrices_diff.png', plot_title="Matrix differences"):
-    diffs = [x == y for x, y in zip(dtwax_matrices, python_matrices)]
-    titles = ["Costs", "Costs left", "Costs top", "Costs diag"]
-    cmap = mcolors.ListedColormap(['#D1D1D1', '#444444'])
-    norm = mcolors.BoundaryNorm([0, 0.5, 1], cmap.N)
-    fig, axes = plt.subplots(2, 2, figsize=(10, 10))
-    for ax, diff, title in zip(axes.flat, diffs, titles):
-        im = ax.imshow(diff, cmap=cmap, norm=norm)
-        ax.xaxis.tick_top()
-        ax.set_title(title)
-    legend_patches = [
-        mpatches.Patch(color=cmap.colors[1], label='Correct value'),
-        mpatches.Patch(color=cmap.colors[0], label='Incorrect value')
-    ]
-
-    fig.suptitle(plot_title, y=0.95, fontsize=16)
-    fig.legend(handles=legend_patches, loc='upper center', ncol=2, fontsize=12, bbox_to_anchor=(0.5, 0.9))
-    fig.tight_layout()
-    plt.savefig(file_path, dpi=150, bbox_inches='tight')
-    plt.close()
+#     fig.suptitle(plot_title, y=0.95, fontsize=16)
+#     fig.legend(handles=legend_patches, loc='upper center', ncol=2, fontsize=12, bbox_to_anchor=(0.5, 0.9))
+#     fig.tight_layout()
+#     plt.savefig(file_path, dpi=150, bbox_inches='tight')
+#     plt.close()
 
 
-def _save_test_case(reference, query, dtwax_results, python_results, directory="."):
-    dtwax_score, dtwax_matrices = dtwax_results
-    python_score, python_matrices = python_results
-    # Save the reference and query into a data file
+
+
+def _sweep(ref_batch_counts, query_batch_counts, segment_sizes, depth, thorough=False):
+    all_pass = True
+    for ref_batch_count in ref_batch_counts:
+        for query_batch_count in query_batch_counts:
+            for segment_size in segment_sizes:
+                ref_len = 64*segment_size*ref_batch_count
+                query_len = 64*query_batch_count
+                test_passes = _run_test(ref_len, query_len, depth, segment_size, thorough)
+                # ensure test is run before aggregating booleans, o/w it'll be skipped when all_pass is false
+                all_pass = all_pass and test_passes
+    return all_pass
+
+def rlarge_qlarge():
+    # numbers chosen to be similar to protein squiggle/template lens, rounded up to a multiple of 64
+    all_pass = True
+    # for segment_size in [1,2,4,10,20]:
+    for segment_size in [1]:
+        # test_passes = _run_test(64*600, 64*27, num_queries=1, segment_size=segment_size, thorough=False)
+        test_passes = _run_test(2560, 320, num_queries=20, segment_size=8, thorough=True, save_failures=True)
+        all_pass = all_pass and test_passes
+    return all_pass
+
+def fast_sweep():
+    ref_batch_counts = [1,2,5]
+    query_batch_counts = [1,2,5]
+    segment_sizes = [1,2,3,4,8]
+    depth = 100
+    return _sweep(ref_batch_counts, query_batch_counts, segment_sizes, depth, thorough=False)
+                
+def thorough_sweep():
+    ref_batch_counts = [1,2,5]
+    query_batch_counts = [1,2,5]
+    segment_sizes = [1,2,3,4,8]
+    depth = 10
+    return _sweep(ref_batch_counts, query_batch_counts, segment_sizes, depth, thorough=True)
+
+def protein_id():
     script_dir = os.path.dirname(os.path.realpath(__file__))
-    os.makedirs(os.path.join(script_dir, f"{directory}"), exist_ok=True)
-    file_path = os.path.join(script_dir, f"{directory}/data.txt")
-    with open(file_path, "w") as outFile:
-        outFile.write(" ".join(map(str, reference)) + "\n")
-        outFile.write(" ".join(map(str, query)) + "\n")
+    file_path = os.path.join(script_dir, 'protein_id_test.txt')
+    dtwax_scores, _ = test_utils.launch_DTWax(file_path)
+    python_scores = test_utils.launch_python_dtw(file_path)
+    return test_utils.compare_scores(dtwax_scores, python_scores)
 
-    # Save the figure
-    file_path = os.path.join(script_dir, f"{directory}/diffs.png")
-    title = f"python:{python_score}, dtwax={dtwax_score}"
-    _save_diffs_plot(dtwax_matrices, python_matrices, file_path, title)
-    
-    # Save the cost matrices
-    file_path = os.path.join(script_dir, f"{directory}/matrices.p")
-    with open(file_path, "wb") as f:
-        pickle.dump((dtwax_matrices, python_matrices), f)
-        
-    # Load from file
-    # with open("matrices.pkl", "rb") as f:
-    #     loaded_set1, loaded_set2 = pickle.load(f)
+def failing_again():
+    # return _run_test_fast(64*599, 64*27, num_queries=200)
+    return _run_test(64*2, 64*2, num_queries=1, thorough=True)  
+
+
+
+def protein_id_seg16():
+    return False
 
 # This DOES NOT work if you have more queries than BLOCK_NUM
 # The cost matrices will not be reconstructed from the print statements accurately
@@ -146,13 +145,13 @@ def debug_a_test():
     query_len = query_batches * query_batch_size
     reference = np.random.randint(0, 2, ref_len, dtype=np.int32)
     queries = np.random.randint(0, 2, (num_queries, query_len), dtype=np.int32)
-    file_path = test_utils.write_temp_data(reference, queries)
+    file_path = test_utils.write_data(reference, queries)
     dtwax_scores, std_out = test_utils.launch_DTWax(
-        file_path, segment_size, query_batch_size, debug=True)
+        file_path, segment_size, query_batch_size, thorough=True)
     dtwax_matrices = test_utils.process_stdout(
         std_out, len(reference), len(queries[0]), len(queries))
     python_dtw = functools.partial(
-        test_utils.python_dtw_score_debug, reference)
+        test_utils.python_dtw_score_matrix, reference)
     with Pool() as pool:
         python_results = pool.map(python_dtw, queries)
 
@@ -205,7 +204,7 @@ def performance_test():
     query_len = 64*9 # median template length
     reference = np.random.rand(ref_len).astype(np.float32)
     queries = np.random.rand(num_queries, query_len).astype(np.float32)
-    file_path = test_utils.write_temp_data(reference, queries)
+    file_path = test_utils.write_data(reference, queries)
     dtwax_scores, std_out = test_utils.launch_DTWax(file_path, segment_size, query_batch_size)
     for line in std_out:
         match = re.search(r"TIMING:\s([\d.]+)\sms\s\(concurrent_DTW_kernel_launch\)", line.strip())
@@ -229,10 +228,10 @@ def by_data_file_single_query():
             queries.append(list(map(float, line.strip().split())))
     query = queries[0]
     dtwax_scores, dtwax_stdout = test_utils.launch_DTWax(
-        file_path, segment_size, debug=True)
+        file_path, segment_size, thorough=True)
     dtw_matrices = test_utils.process_stdout(
         dtwax_stdout, len(reference), len(queries[0]))
-    python_score, python_costs = test_utils.python_dtw_score_debug(
+    python_score, python_costs = test_utils.python_dtw_score_matrix(
         reference, query)
     M, N = python_costs.shape
     inf_col = np.full((M, 1), np.inf)
@@ -282,11 +281,11 @@ def by_data_file():
         for line in inFile:
             queries.append(list(map(float, line.strip().split())))
     dtwax_scores, dtwax_stdout = test_utils.launch_DTWax(
-        file_path, segment_size=2, debug=True)
+        file_path, segment_size=2, thorough=True)
     dtwax_matrices = test_utils.process_stdout(
         dtwax_stdout, len(reference), len(queries[0]), len(queries))
     for i, query in enumerate(queries):
-        python_score, python_matrix = test_utils.python_dtw_score_debug(
+        python_score, python_matrix = test_utils.python_dtw_score_matrix(
             reference, query)
         diff = dtwax_matrices[i] != python_matrix
         cmap = mcolors.ListedColormap(['#5ab4ac', '#d8b365'])
@@ -304,7 +303,6 @@ def by_data_file():
 
     return python_score == dtwax_scores[0]
 
-
 def random_ints_fast():
     # params to check (make changes here)
     num_queries = 32
@@ -319,9 +317,9 @@ def random_ints_fast():
     queries = np.random.randint(0, 2, (num_queries, query_len), dtype=np.int32)
     
     # prep data and run
-    file_path = test_utils.write_temp_data(reference, queries)
+    file_path = test_utils.write_data(reference, queries)
     dtwax_scores, _ = test_utils.launch_DTWax(
-        file_path, segment_size, query_batch_size, debug=False)
+        file_path, segment_size, query_batch_size, thorough=False)
     python_scores = test_utils.launch_python_dtw(file_path)
     return test_utils.compare_scores(dtwax_scores, python_scores)
 
@@ -333,15 +331,15 @@ def random_ints_thorough():
 
     reference = np.random.randint(0, 2, ref_len, dtype=np.int32)
     queries = np.random.randint(0, 2, (num_queries, query_len), dtype=np.int32)
-    file_path = test_utils.write_temp_data(reference, queries)
+    file_path = test_utils.write_data(reference, queries)
     dtwax_scores, std_out = test_utils.launch_DTWax(
-        file_path, segment_size, debug=True)
+        file_path, segment_size, thorough=True)
     dtwax_matrices = test_utils.process_stdout(
         std_out, len(reference), len(queries[0]), len(queries))
     dtwax_results = zip(dtwax_scores, dtwax_matrices)
 
     python_dtw = functools.partial(
-        test_utils.python_dtw_score_debug, reference)
+        test_utils.python_dtw_score_matrix, reference)
     with Pool() as pool:
         python_results = pool.map(python_dtw, queries)
 
@@ -392,30 +390,3 @@ def random_ints_thorough():
     #     outFile.write(" ".join(map(str, queries[0])) + "\n")
     # print(f"Passing case written to {passing_file_path}")
     # return passing
-
-
-def protein_id():
-    script_dir = os.path.dirname(os.path.realpath(__file__))
-    file_path = os.path.join(script_dir, 'protein_id_test.txt')
-    dtwax_scores, _ = test_utils.launch_DTWax(file_path, segment_size=1)
-    python_scores = test_utils.launch_python_dtw(file_path)
-    return test_utils.compare_scores(dtwax_scores, python_scores)
-
-
-def failing_seg2():
-    reference = [1]*128
-    query = [1]*64
-    reference[0] = 5
-    # query[0] = 5
-    file_path = test_utils.write_temp_data(reference, [query])
-    dtwax_scores, dtwax_stdout = test_utils.launch_DTWax(
-        file_path, segment_size=2)
-    dtwax_matrix = test_utils.process_stdout(
-        dtwax_stdout, len(reference), len(query))
-    python_score, python_matrix = test_utils.python_dtw_score_debug(
-        reference, query)
-    print("DTWax:")
-    print(dtwax_matrix)
-    print("Python:")
-    print(python_matrix)
-    return python_score == dtwax_scores[0]

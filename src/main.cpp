@@ -284,7 +284,7 @@ int main(int argc, char **argv)
             << "DTW-score\n";
   for (index_t j = 0; j < NUM_READS; j++)
   {
-    printf("%ld\t%d\t%d\t%.2f\n", j, QUERY_LEN, REF_LEN, HALF2FLOAT(host_dist[j]));
+    printf("%ld\t%d\t%d\t%.7f\n", j, QUERY_LEN, REF_LEN, host_dist[j]);
   }
 
   // Free remaining memory
