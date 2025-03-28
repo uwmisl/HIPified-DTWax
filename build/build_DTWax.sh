@@ -1,33 +1,53 @@
 #!/bin/bash
 
-# Parse arguments (filename, -debug, -segment_size, -query_batch_size)
+# Parse arguments (ref_filename, query_filename, -debug, -segment_size, -query_batch_size)
 debug_flag="" segment_size=1 query_batch_size=64
+ref_file="" query_file=""
+
 while [ $# -gt 0 ]; do
   case $1 in
     -debug) debug_flag="debug"; shift ;;
     -segment_size) segment_size=$2; shift 2 ;;
     -query_batch_size) query_batch_size=$2; shift 2 ;;
-    *) file=$1; shift ;;
+    *) 
+      # Ensure we capture two filenames
+      if [ -z "$ref_file" ]; then
+        ref_file=$1
+      elif [ -z "$query_file" ]; then
+        query_file=$1
+      else
+        echo "Error: Too many arguments." >&2
+        exit 1
+      fi
+      shift
+      ;;
   esac
 done
 
-# Filename is required
-[ -z "$file" ] && { echo "Error: Missing filename." >&2; exit 1; }
+# Check if both filenames are provided
+if [ -z "$ref_file" ] || [ -z "$query_file" ]; then
+  echo "Error: Missing reference file or query file arguments." >&2
+  exit 1
+fi
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 script_name=$(basename "$0")
 script_path="$script_dir/$script_name"
 
-# Check if the file exists
-if [ ! -f "$file" ]; then
-  echo "Error: File '$file' does not exist."  >&2
+# Check if the files exists
+if [ ! -f "$ref_file" ]; then
+  echo "Error: File '$ref_file' does not exist."  >&2
+  exit 1
+fi
+if [ ! -f "$query_file" ]; then
+  echo "Error: File '$query_file' does not exist."  >&2
   exit 1
 fi
 
 # Calculate required values
-ref_len=$(head -n 1 "$file" | wc -w)
-query_len=$(sed -n '2p' "$file" | wc -w)
-num_reads=$(( $(wc -l < "$file") - 1 ))
+ref_len=$(head -n 1 "$ref_file" | wc -w)
+query_len=$(head -n 1 "$query_file" | wc -w)
+num_reads=$(( $(wc -l < "$query_file")))
 
 # Define output path for the header file
 src_dir="$script_dir/../src"

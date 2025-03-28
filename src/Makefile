@@ -4,7 +4,7 @@ CXXFLAGS= -fopenmp -fno-omit-frame-pointer -march=native -I$(ROCM_INC)/miopen -I
 LDFLAGS = -Wl,-rpath=$(ROCM_LIB)/llvm/lib
 LIBS = -lz -lMIOpen -L$(ROCM_LIB) -L$(ROCM_LIB)/llvm/lib -lomp
 
-HIPCFLAGS = -O2 -Wall
+HIPCFLAGS = -O2 -Wall --offload-arch=gfx90a
 
 # To avoid the warnings about ignoring the return value of functions declared with 'nodiscard' (want the return values checked)
 # CXXFLAGS += -Wno-unused-result

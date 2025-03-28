@@ -50,14 +50,13 @@ hipStream_t stream_var[STREAM_NUM];
 
 int main(int argc, char **argv)
 {
-  // The program needs one argument, the filename containing the reference and query signals
-  if (argc != 2)
+  // The program needs two arguments, the filenames containing the reference and query signals
+  if (argc != 3)
   {
-    std::cerr << "Error: Invalid number of arguments." << std::endl;
-    std::cerr << "Usage: " << argv[0] << " <data file name>" << std::endl;
-    return 1;
+    throw std::runtime_error("Error: Invalid number of arguments.\nUsage: " + std::string(argv[0]) + " <reference data file name> <query data file name>");
   }
-  std::string data_file = argv[1];
+  std::string ref_data_file = argv[1];
+  std::string query_data_file = argv[2];
 
 #ifdef HIP_DEBUG
   printf("REF_LEN=%0d\n", REF_LEN);
@@ -68,29 +67,34 @@ int main(int argc, char **argv)
   printf("SEGMENT_SIZE=%0d\n", SEGMENT_SIZE);
   printf("WARP_SIZE=%0d\n", WARP_SIZE);
 #endif
-// A number of important parameters are defined in data_dims.hpp, we sanity check them here
-// MQ: There are other ones I should be checking here, but I haven't teased them apart yet
+  // A number of important parameters are defined in data_dims.hpp, we sanity check them here
+  // MQ: There are other ones I should be checking here, but I haven't teased them apart yet
   if (QUERY_LEN < QUERY_BATCH_SIZE)
   {
-    std::cerr << "Error: The QUERY_BATCH_SIZE must be no larger than QUERY_LEN" << std::endl;
+    fprintf(stderr, "Error: The QUERY_BATCH_SIZE (%d) must be no larger than QUERY_LEN (%d)\n", QUERY_BATCH_SIZE, QUERY_LEN);
     return 1;
   }
 
   if (REF_BATCH <= 0)
   {
-    std::cerr << "Error: REF_BATCH <= 0, check REF_LEN and SEGMENT_SIZE. " << std::endl;
+    fprintf(stderr, "Error: REF_BATCH (%d) <= 0, check REF_LEN (%d) and SEGMENT_SIZE (%d).\n", REF_BATCH, REF_LEN, SEGMENT_SIZE);
     return 1;
   }
 
   if (REF_LEN % REF_TILE_SIZE != 0)
   {
-    std::cerr << "Error: REF_BATCH is fractional. Check REF_LEN, SEGMENT_SIZE, and WARP_SIZE." << std::endl;
+    fprintf(stderr, "Error: REF_LEN (%d) is not divisible by REF_TILE_SIZE (%d). Check REF_LEN (%d), SEGMENT_SIZE (%d), and WARP_SIZE (%d).\n",
+            REF_LEN,
+            REF_TILE_SIZE,
+            REF_LEN,
+            SEGMENT_SIZE,
+            WARP_SIZE);
     return 1;
   }
 
   if (QUERY_LEN % QUERY_BATCH_SIZE != 0)
   {
-    std::cerr << "Error: QUERY_LEN does not divide evenly into QUERY_BATCH_SIZE" << std::endl;
+    fprintf(stderr, "Error: QUERY_LEN (%d) does not divide evenly into QUERY_BATCH_SIZE (%d)\n", QUERY_LEN, QUERY_BATCH_SIZE);
     return 1;
   }
 
@@ -128,17 +132,10 @@ int main(int argc, char **argv)
   }
   TIMERSTOP(malloc)
 
-  // TODO: Adjust this to read my template in from a file
   TIMERSTART(load_data)
-  std::ifstream inFile(data_file);
-  if (!inFile)
-  {
-    std::cerr << "Error: File '" << data_file << "' does not exist or cannot be opened." << std::endl;
-    // MQ: Nothing is being freed when we exit here
-    return 1;
-  }
-  readDataFromTxt(inFile, temp_host_ref, host_query);
-  inFile.close();
+
+  readRefFromTxt(ref_data_file, temp_host_ref);
+  readQueriesFromTxt(query_data_file, host_query);
 
 #ifdef HIP_DEBUG
   // Output the data to verify it was read correctly

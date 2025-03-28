@@ -48,7 +48,7 @@ def process_stdout(dtwax_stdout, ref_len, query_len, num_queries):
             cost_top_matrices[x][y,z] = np.inf if top == "inf" else float(top)
             cost_diag_matrices[x][y,z] = np.inf if diag == "inf" else float(diag)
 
-    return zip(cost_matrices, cost_left_matrices, cost_top_matrices, cost_diag_matrices)
+    return list(zip(cost_matrices, cost_left_matrices, cost_top_matrices, cost_diag_matrices))
 
 
 def write_data(reference, queries, file_path='data.temp'):
@@ -229,8 +229,10 @@ def save_test_case(reference, query, dtwax_results, python_results, directory=".
     dtwax_score, dtwax_matrices = dtwax_results
     python_score, python_matrices = python_results
     # Save the reference and query into a data file
-    write_data(reference, [query], f"{directory}/data.txt")
+    
     script_dir = os.path.dirname(os.path.realpath(__file__))
+    os.makedirs(os.path.join(script_dir, directory))
+    write_data(reference, [query], f"{directory}/data.txt")
     # os.makedirs(os.path.join(script_dir, f"{directory}"), exist_ok=True)
     # file_path = os.path.join(script_dir, f"{directory}/data.txt")
     # with open(file_path, "w") as outFile:
