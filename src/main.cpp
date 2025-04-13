@@ -36,6 +36,7 @@ All rights reserved.
 #include <stdio.h>
 #include <string>
 #include <unistd.h>
+#include <chrono>
 
 #include "include/common.hpp"
 #include "include/datatypes.hpp"
@@ -43,6 +44,7 @@ All rights reserved.
 #include "include/DTW.hpp"
 #include "include/hpc_helpers.hpp"
 #include "include/read_from_txt.hpp"
+#include "include/read_from_binary.hpp"
 
 using namespace FullDTW;
 
@@ -50,6 +52,8 @@ hipStream_t stream_var[STREAM_NUM];
 
 int main(int argc, char **argv)
 {
+  auto start = std::chrono::high_resolution_clock::now();
+
   // The program needs two arguments, the filenames containing the reference and query signals
   if (argc != 3)
   {
@@ -107,19 +111,25 @@ int main(int argc, char **argv)
       *device_query[STREAM_NUM],    // One device_query per stream
       *device_dist[STREAM_NUM],     // One device_dist (distance results) per stream
       *device_last_row[STREAM_NUM]; // Last row of sub-matrix (one per stream)
+// MQ Debugging
+#ifdef HIP_DEBUG
+  float4 *host_debug_data; // On the host side
+  float4 *d_debug_data[STREAM_NUM];
+#endif
 
   // ~~~
   // Memory Allocations
   // ~~~
   TIMERSTART(malloc)
-  // index_t NUM_READS = 1;
   // On the host:
   // MQ: value_ht or raw_t...?
   ASSERT(hipHostMalloc(&host_ref, sizeof(value_ht) * REF_LEN));
   ASSERT(hipHostMalloc(&temp_host_ref, sizeof(value_ht) * REF_LEN));
   ASSERT(hipHostMalloc(&host_query, sizeof(value_ht) * (NUM_READS * QUERY_LEN + WARP_SIZE)));
   ASSERT(hipHostMalloc(&host_dist, sizeof(value_ht) * NUM_READS));
-  // ASSERT(hipHostMalloc(&query_squiggle, sizeof(raw_t) * (NUM_READS * QUERY_LEN)));
+#ifdef HIP_DEBUG
+  ASSERT(hipHostMalloc(&host_debug_data, sizeof(float4) * REF_LEN * QUERY_LEN * NUM_READS));
+#endif
   // On the device:
   ASSERT(hipMalloc(&device_ref, sizeof(value_ht) * REF_LEN));
   for (int stream_id = 0; stream_id < STREAM_NUM; stream_id++)
@@ -129,13 +139,19 @@ int main(int argc, char **argv)
     ASSERT(hipMalloc(&device_last_row[stream_id], (sizeof(value_ht) * (REF_LEN * BLOCK_NUM))));
     // Create the stream (saving into global variable 'stream_var')
     ASSERT(hipStreamCreate(&stream_var[stream_id]));
+// MQ Debugging
+#ifdef HIP_DEBUG
+    ASSERT(hipMalloc(&d_debug_data[stream_id], REF_LEN * QUERY_LEN * BLOCK_NUM * sizeof(float4)));
+#endif
   }
+
   TIMERSTOP(malloc)
 
   TIMERSTART(load_data)
 
   readRefFromTxt(ref_data_file, temp_host_ref);
-  readQueriesFromTxt(query_data_file, host_query);
+  // readQueriesFromTxt(query_data_file, host_query);
+  readQueriesFromBin(query_data_file, host_query);
 
 #ifdef HIP_DEBUG
   // Output the data to verify it was read correctly
@@ -196,15 +212,11 @@ int main(int argc, char **argv)
   ASSERT(hipHostFree(host_ref));
   TIMERSTOP(load_data)
 
+  TIMERSTART(concurrent_DTW_kernel_launch)
   // Ask the device (GPU) to prefer shared memory over cache memory
   // Shared memory size will be increased, L1 cache size will be decreased
   // (Optimization)
   ASSERT(hipDeviceSetCacheConfig(hipFuncCachePreferShared));
-
-  //-------------total batches of concurrent workload to & fro
-  // device---------------//
-
-  TIMERSTART(concurrent_DTW_kernel_launch)
   // Ceiling arithmetic to calculate total number of batches needed (last batch may be partially filled)
   idxt batch_count = (NUM_READS + (BLOCK_NUM * STREAM_NUM) - 1) / (BLOCK_NUM * STREAM_NUM);
   std::cout << "Batch count: " << batch_count << " num_reads:" << NUM_READS
@@ -258,22 +270,39 @@ int main(int argc, char **argv)
       // Launch the kernel
       distances<value_ht, idxt>(device_ref, device_query[stream_id],
                                 device_dist[stream_id], rds_in_stream,
-                                stream_var[stream_id], device_last_row[stream_id]);
+                                stream_var[stream_id], device_last_row[stream_id]
+// MQ Debugging
+#ifdef HIP_DEBUG
+                                ,
+                                d_debug_data[stream_id]
+#endif
+      );
 
       // Copy the distance results back to the host
       // Move device_dist to host_dist
       ASSERT(hipMemcpyAsync(
           &host_dist[(batch_id * STREAM_NUM * BLOCK_NUM) +
-                     ((stream_id)*BLOCK_NUM)],
+                     (stream_id*BLOCK_NUM)],
           device_dist[stream_id], (sizeof(value_ht) * rds_in_stream),
           hipMemcpyDeviceToHost, stream_var[stream_id]));
+
+#ifdef HIP_DEBUG
+      // Copy the debug data back to the host
+      ASSERT(hipMemcpyAsync(
+          &host_debug_data[(stream_id * BLOCK_NUM * REF_LEN * QUERY_LEN)],
+          d_debug_data[stream_id],
+          (sizeof(float4) * REF_LEN * QUERY_LEN * rds_in_stream),
+          hipMemcpyDeviceToHost,
+          stream_var[stream_id]));
+          // 0));
+#endif
     }
   }
 
   // Wait on all active streams
   ASSERT(hipDeviceSynchronize());
   TIMERSTOP(concurrent_DTW_kernel_launch)
-
+  TIMERSTART(print_results)
   // Print final output
   std::cout << "Results:\n";
   std::cout << "QUERY_LEN\t"
@@ -283,6 +312,34 @@ int main(int argc, char **argv)
   {
     printf("%ld\t%d\t%d\t%.7f\n", j, QUERY_LEN, REF_LEN, host_dist[j]);
   }
+  TIMERSTOP(print_results)
+
+#ifdef HIP_DEBUG
+  // for (int j = 0; j < NUM_READS; j++)
+  // {
+  //   std::string filename = "./debug_output/debug_matrices_" + std::to_string(REF_LEN) + "_" + std::to_string(QUERY_LEN) + "_" + std::to_string(j) + ".bin";
+  //   std::ofstream file(filename, std::ios::binary);
+
+  //   // Write the appropriate data from host_debug_data[j * REF_LEN * QUERY_LEN] to the file
+  //   int start_index = j * REF_LEN * QUERY_LEN;
+  //   file.write(reinterpret_cast<char*>(&host_debug_data[start_index]), sizeof(float4) * REF_LEN * QUERY_LEN);
+  //   file.close();
+  // }
+  std::string filename = "./debug_output/debug_matrices_" + std::to_string(getpid()) + ".bin";
+  printf("Writing debug data to %s\n", filename.c_str());
+  std::ofstream file(filename, std::ios::binary);
+
+  for (int j = 0; j < NUM_READS; j++)
+  {
+      // Calculate the appropriate start index for each read
+      int start_index = j * REF_LEN * QUERY_LEN;
+  
+      // Write the appropriate data from host_debug_data[j * REF_LEN * QUERY_LEN] to the file
+      file.write(reinterpret_cast<char*>(&host_debug_data[start_index]), sizeof(float4) * REF_LEN * QUERY_LEN);
+  }
+  
+  file.close();
+#endif
 
   // Free remaining memory
   TIMERSTART(free)
@@ -298,7 +355,9 @@ int main(int argc, char **argv)
     ASSERT(hipFree(device_last_row[stream_id]));
   }
   TIMERSTOP(free)
-
+  auto end = std::chrono::high_resolution_clock::now();
+  std::chrono::duration<double, std::milli> duration = end - start;    // Output the results
+  std::cout << "Execution time: " << duration.count() << " ms" << std::endl;
   return 0;
 }
 

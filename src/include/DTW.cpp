@@ -17,7 +17,7 @@
 
 // Cost function if reference deletions are not permitted
 // Cost = cost_here + min(top, diag)
-// (cannot move directly left to right, as this is a reference deletion)
+// (cannot move directly left to right, as that would be a reference deletion)
 #else
 #define COST_FUNCTION(q, r, left, top, diag) \
   FMA(FMA(SUB(r, q), SUB(r, q), 0.0f), 1.0f, \
@@ -40,25 +40,25 @@ compute_segment(val_t &query_val,
                 val_t (&penalty_temp)[2], idxt query_batch
 #ifdef HIP_DEBUG
                 ,
-                idxt &wave, const idx_t &thread_id, idx_t block_id, idxt ref_batch
+                idxt &wave, const idx_t &thread_id, idx_t block_id, idxt ref_batch, float4 *debug_data
 #endif
 )
 {
   penalty_temp[0] = penalty_here[0];
 
-// The very first cell uses penalty_left and penalty_diag, and then the first value
+// The very first cell in this segment uses penalty_left and penalty_diag, and then the first value
 // of penalty_here (representing the penalty of the cell directly above this one)
 #ifdef HIP_DEBUG
   int column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE;
   int row = query_batch * QUERY_BATCH_SIZE + wave - thread_id - 1;
   val_t penalty_top = penalty_here[0];
-  // printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_left, penalty_here[0], penalty_diag);
 #endif
   penalty_here[0] = COST_FUNCTION(query_val, ref[0], penalty_left,
                                   penalty_here[0], penalty_diag);
 #ifdef HIP_DEBUG
-  // printf("[%0d,%0d,%0d]=%.7f,\n", block_id, row, column, penalty_here[0]);
-  printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[0], penalty_left, penalty_top, penalty_diag);
+  debug_data[(block_id * REF_LEN * QUERY_LEN) + (row * REF_LEN) + (column)] = make_float4(penalty_here[0], penalty_left, penalty_top, penalty_diag);
+  // debug_data[(block_id * REF_LEN * QUERY_LEN) + (row * REF_LEN) + (column)] = make_float4(block_id, row, column, 5);
+  // printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[0], penalty_left, penalty_top, penalty_diag);
 #endif
 
 #if ((SEGMENT_SIZE % 2) == 0)
@@ -73,49 +73,54 @@ compute_segment(val_t &query_val,
 #ifdef HIP_DEBUG
     column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i;
     penalty_top = penalty_here[i];
-    // printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[i - 1], penalty_here[i], penalty_temp[0]);
 #endif
     penalty_here[i] =
         COST_FUNCTION(query_val, ref[i], penalty_here[i - 1],
                       penalty_here[i], penalty_temp[0]);
 #ifdef HIP_DEBUG
-    printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[i], penalty_here[i - 1], penalty_top, penalty_temp[0]);
-    // printf("[%0d,%0d,%0d]=%.7f\n", block_id, row, column, penalty_here[i]);
+    debug_data[(block_id * REF_LEN * QUERY_LEN) + (row * REF_LEN) + (column)] = make_float4(penalty_here[i], penalty_here[i - 1], penalty_top, penalty_temp[0]);
+    // debug_data[(block_id * REF_LEN * QUERY_LEN) + (row * REF_LEN) + (column)] = make_float4(block_id, row, column, 5);
+    // printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[i], penalty_here[i - 1], penalty_top, penalty_temp[0]);
 #endif
 
     penalty_temp[0] = penalty_here[i + 1];
 #ifdef HIP_DEBUG
     column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + i + 1;
     penalty_top = penalty_here[i + 1];
-    // printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[i], penalty_here[i + 1], penalty_temp[1]);
 #endif
     penalty_here[i + 1] =
         COST_FUNCTION(query_val, ref[i + 1], penalty_here[i],
                       penalty_here[i + 1], penalty_temp[1]);
 #ifdef HIP_DEBUG
-    printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[i + 1], penalty_here[i], penalty_top, penalty_temp[1]);
-    // printf("[%0d,%0d,%0d]=%.7f\n", block_id, row, column, penalty_here[i + 1]);
+    debug_data[(block_id * REF_LEN * QUERY_LEN) + (row * REF_LEN) + (column)] = make_float4(penalty_here[i + 1], penalty_here[i], penalty_top, penalty_temp[1]);
+    // debug_data[(block_id * REF_LEN * QUERY_LEN) + (row * REF_LEN) + (column)] = make_float4(block_id, row, column, 5);
+    // printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[i + 1], penalty_here[i], penalty_top, penalty_temp[1]);
 #endif
   }
 #if ((SEGMENT_SIZE > 1) && ((SEGMENT_SIZE % 2) == 0))
 #ifdef HIP_DEBUG
   column = ref_batch * REF_TILE_SIZE + thread_id * SEGMENT_SIZE + SEGMENT_SIZE - 1;
   penalty_top = penalty_here[SEGMENT_SIZE - 1];
-  // printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[SEGMENT_SIZE - 2], penalty_here[SEGMENT_SIZE - 1], penalty_temp[0]);
 #endif
   penalty_here[SEGMENT_SIZE - 1] =
       COST_FUNCTION(query_val, ref[SEGMENT_SIZE - 1], penalty_here[SEGMENT_SIZE - 2],
                     penalty_here[SEGMENT_SIZE - 1], penalty_temp[0]);
 #ifdef HIP_DEBUG
-  printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[SEGMENT_SIZE - 1], penalty_here[SEGMENT_SIZE - 2], penalty_top, penalty_temp[0]);
-  // printf("[%0d,%0d,%0d]=%.7f\n", block_id, row, column, penalty_here[SEGMENT_SIZE - 1]);
+  debug_data[(block_id * REF_LEN * QUERY_LEN) + (row * REF_LEN) + (column)] = make_float4(penalty_here[SEGMENT_SIZE - 1], penalty_here[SEGMENT_SIZE - 2], penalty_top, penalty_temp[0]);
+  // debug_data[(block_id * REF_LEN * QUERY_LEN) + (row * REF_LEN) + (column)] = make_float4(block_id, row, column, 5);
+  // printf("[%0d,%0d,%0d]=(%.7f,%.7f,%.7f,%.7f)\n", block_id, row, column, penalty_here[SEGMENT_SIZE - 1], penalty_here[SEGMENT_SIZE - 2], penalty_top, penalty_temp[0]);
 #endif
 #endif
 }
 
 template <typename idx_t, typename val_t>
 __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
-                    idx_t num_entries, val_t *device_last_row)
+                    idx_t num_entries, val_t *device_last_row
+#ifdef HIP_DEBUG
+                    ,
+                    float4 *debug_data
+#endif
+)
 {
   // Indexing variables
   const idx_t block_id = blockIdx.x;
@@ -202,7 +207,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
                                       penalty_temp, query_batch
 #ifdef HIP_DEBUG
                                       ,
-                                      wave, thread_id, block_id, 0
+                                      wave, thread_id, block_id, 0, debug_data
 #endif
         );
         penalty_diag = penalty_left;
@@ -321,7 +326,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
               penalty_here, penalty_diag, penalty_temp, query_batch
 #ifdef HIP_DEBUG
               ,
-              wave, thread_id, block_id, ref_batch
+              wave, thread_id, block_id, ref_batch, debug_data
 #endif
           );
           penalty_diag = penalty_left;
@@ -439,7 +444,7 @@ __global__ void DTW(val_t *ref, val_t *query, val_t *dist,
             penalty_here, penalty_diag, penalty_temp, query_batch
 #ifdef HIP_DEBUG
             ,
-            wave, thread_id, block_id, REF_BATCH_MINUS_ONE
+            wave, thread_id, block_id, REF_BATCH_MINUS_ONE, debug_data
 #endif
         );
         // only update penalty_diag if you actually participated in the wave

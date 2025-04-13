@@ -10,10 +10,10 @@ def get_all_tests():
 def main():
     # Comment out the tests you want to skip here in this list
     tests_to_run = [
-        tests.fast_sweep,
+        # tests.fast_sweep,
         # tests.thorough_sweep,
         # tests.rlarge_qlarge,
-        # tests.protein_id,
+        tests.protein_lookup_test,
         # tests.random_ints_fast,
         # tests.random_ints_thorough,
         

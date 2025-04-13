@@ -37,12 +37,23 @@ namespace FullDTW
 
   __host__ void distances(val_t *ref, val_t *query, val_t *dists,
                           idx_t num_entries, hipStream_t stream,
-                          val_t *device_last_row)
+                          val_t *device_last_row
+  // MQ Debugging
+#ifdef HIP_DEBUG
+                          ,
+                          float4 *d_debug_data
+#endif
+  )
   {
     // <<<grid_dim, block_dim, shared_mem, stream>>>
     // so, num_entries number of blocks per grid, and WARP_SIZE threads per block
     DTW<idx_t, val_t><<<num_entries, WARP_SIZE, 0, stream>>>(
-        ref, query, dists, num_entries, device_last_row);
+        ref, query, dists, num_entries, device_last_row
+#ifdef HIP_DEBUG
+        ,
+        d_debug_data
+#endif
+    );
 
     return;
   }

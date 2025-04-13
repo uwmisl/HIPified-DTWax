@@ -74,7 +74,6 @@ inline void readQueriesFromTxt(std::string data_file, value_t *queries)
     }
 }
 
-
 inline void readDataFromTxt(std::ifstream &inFile, value_t *ref, value_t *queries)
 {
     std::string line;

@@ -40,7 +40,7 @@ typedef float value_ht;
 #define SQRT(a) sqrtf(a)  // a is to be float
 #define GT(a, b) (a > b)
 
-#define BLOCK_NUM 1024  //1024
-#define STREAM_NUM 4 //4
+#define BLOCK_NUM 1024 // Multiple of 104 (CUs)
+#define STREAM_NUM 8 //16
 
 #endif
